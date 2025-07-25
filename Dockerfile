@@ -90,5 +90,12 @@ COPY . .
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
-# Start the Gmail automation workflow (equivalent to: python python_oauth_automation.py --password $GMAIL_PASSWORD --workflow --headless)
-CMD ["sh", "-c", "python3 python_oauth_automation.py --password \"${GMAIL_PASSWORD}\" --workflow --headless"] 
+# Expose port for web service
+EXPOSE 8080
+
+# Health check for Render deployment
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Start the web service (auto-starts Gmail workflow in background if GMAIL_PASSWORD is provided)
+CMD ["python3", "web_service.py"] 

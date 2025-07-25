@@ -38,73 +38,92 @@ Deploy to Render for 24/7 operation:
 
 ### Docker Deployment
 
-#### Option 1: Standalone Docker (Gmail Workflow)
+#### Option 1: Standalone Docker (Web Service + Auto-Workflow)
 ```bash
-# Build and run Gmail automation workflow (equivalent to --workflow flag)
+# Build and run web service with auto-starting Gmail workflow
 docker build -t gmail-automation .
-docker run \
+docker run -p 8080:8080 \
   -e GMAIL_EMAIL="your-email@gmail.com" \
   -e GMAIL_PASSWORD="your-password" \
   gmail-automation
 ```
 
-**Behavior**: Runs the complete Gmail processing workflow in headless mode, connecting to [Midas Portal](https://midas-portal-f853.vercel.app) automatically. Processes Gmail every 20 minutes continuously.
+**Behavior**: 
+- ✅ Starts web service on port 8080 (for monitoring/control)
+- ✅ Auto-starts complete Gmail workflow in background
+- ✅ Processes Gmail every 20 minutes continuously  
+- ✅ Deploys successfully on Render and other platforms
 
 **Quick Test:**
 ```bash
 # Test with your credentials
-docker run \
+docker run -p 8080:8080 \
   -e GMAIL_EMAIL="midasportal1234@gmail.com" \
   -e GMAIL_PASSWORD="outsourceai1234" \
   gmail-automation
+
+# Then visit: http://localhost:8080/ for dashboard
 ```
 
-#### Option 2: Docker Compose (With Redis for history tracking)
+#### Option 2: Docker Compose (With Redis + Web Dashboard)
 ```bash
 # Copy template and edit with your credentials
 cp env.docker.template .env
 # Edit .env with your actual Gmail credentials
 
-# Run Gmail automation with Redis for cycle history
+# Run web service + Gmail automation + Redis
 docker-compose up -d
+
+# View logs
+docker-compose logs -f gmail-automation
+
+# Access dashboard at: http://localhost:8080/
 ```
 
-**Behavior**: Same Gmail workflow as Option 1, but with Redis for storing cycle history and error tracking.
+**Behavior**: Same as Option 1, plus Redis for cycle history storage and enhanced web dashboard features.
 
 **Redis Benefits:**
 - ✅ **With Redis**: Stores cycle history, error tracking, detailed logs
 - ⚠️ **Without Redis**: Still runs full workflow, just no historical data
 
-## 📊 Monitoring & Logs
+## 📊 Monitoring & Control
 
-### Docker Workflow Mode (Default)
+### Web Dashboard (Default for Docker/Render)
+```bash
+# Docker deployment automatically provides web dashboard
+docker run -p 8080:8080 -e GMAIL_EMAIL="..." -e GMAIL_PASSWORD="..." gmail-automation
+
+# Access dashboard at:
+http://localhost:8080/
+
+# For Render deployment:
+https://your-app-name.onrender.com/
+```
+
+**Web Dashboard Features:**
+- ✅ Real-time automation status and controls
+- 📈 Cycle count, timing, and success rates
+- 📝 Recent activity logs and cycle history  
+- 🔄 Manual start/stop/restart controls
+- 🎯 Configured for Midas Portal automatically
+- 📊 API endpoints for integration
+
+### Command Line Logs (Alternative)
 ```bash
 # View live logs from Docker container
 docker logs -f <container-name>
 
-# View logs with timestamps
+# View logs with timestamps  
 docker logs -t <container-name>
+
+# For direct Python execution
+python python_oauth_automation.py --password YOUR_PASSWORD --workflow
 ```
 
-### Web Dashboard Mode (Optional)
-For web dashboard instead of workflow mode, run:
-```bash
-python web_service.py
-# Then access: http://localhost:8080/
-```
-
-**When to use Web Dashboard:**
-- 🌐 Need web UI for monitoring and control
-- 📊 Want visual status dashboard  
-- 🔄 Prefer manual start/stop controls
-- 👥 Multiple users need access
-
-**Web Dashboard Features:**
-- ✅ Real-time automation status
-- 📈 Cycle count and timing  
-- 📝 Recent activity logs
-- 🔄 Manual start/stop controls
-- 🎯 Configured for Midas Portal automatically
+**When to use Command Line:**
+- 🖥️ Running locally for development/testing
+- 📝 Need detailed terminal output
+- 🔧 Debugging specific issues
 - 📊 API documentation
 
 ## 🔧 Local Development

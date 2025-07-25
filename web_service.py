@@ -2,6 +2,16 @@
 """
 Web Service for Gmail OAuth Automation
 FastAPI-based web service for cloud deployment on Render
+
+DEPLOYMENT BEHAVIOR:
+1. Starts as a web service (port 8080) - Render considers deployment "complete"
+2. Auto-starts Gmail workflow in background if GMAIL_PASSWORD env var is provided
+3. Runs complete workflow: OAuth → Gmail Processing → 20min cycles
+4. Provides web dashboard for monitoring and control
+5. API endpoints for programmatic access
+
+This solves the Render timeout issue by being a proper web service while
+still running the complete Gmail automation workflow in the background.
 """
 
 import os
@@ -18,7 +28,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import uvicorn
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 import structlog
 
 # Import our automation classes
@@ -142,7 +151,15 @@ def init_automator():
 
 # Background automation task
 async def run_automation_cycle():
-    """Run a single automation cycle"""
+    """Run a single automation cycle with proper timing
+    
+    This function replicates the complete workflow behavior:
+    1. OAuth authentication (if not done)
+    2. Gmail processing cycle (confirm connection, set filter, extract time, click process)
+    3. Schedule next run 20 minutes after the end of processing time (not from cycle start)
+    
+    This matches the original --workflow behavior exactly.
+    """
     global automation_status, automator
     
     if not automator:
@@ -166,13 +183,49 @@ async def run_automation_cycle():
                 automation_status["errors"].append(error_msg)
                 logger.error(error_msg)
                 return
+            else:
+                logger.info("✅ OAuth completed successfully")
+        else:
+            logger.info("✅ OAuth already completed, proceeding to Gmail processing")
         
         # Run the complete Gmail processing cycle (same as non-headless workflow)
         cycle_success = automator.gmail_processing_cycle()
         
+        if cycle_success:
+            # Extract the time range that was processed and calculate next run time
+            # This matches the original workflow timing logic
+            try:
+                start_hour, end_hour = automator.extract_time_range()
+                next_run_time = automator.calculate_next_run_time(end_hour)
+                
+                # Update scheduler for next run based on actual processing time
+                if scheduler.running:
+                    try:
+                        # Remove existing job and reschedule based on processing time
+                        scheduler.remove_job('gmail_automation')
+                        scheduler.add_job(
+                            run_automation_cycle,
+                            trigger='date',  # Single run at specific time
+                            run_date=next_run_time,
+                            id='gmail_automation',
+                            replace_existing=True
+                        )
+                        automation_status["next_cycle"] = next_run_time
+                        logger.info(f"⏰ Next cycle scheduled for: {next_run_time} (20 minutes after processing end time {end_hour})")
+                    except Exception as scheduler_error:
+                        logger.warning(f"Could not reschedule next run: {scheduler_error}")
+                        # Fallback to manual scheduling in 20 minutes
+                        automation_status["next_cycle"] = cycle_start + timedelta(minutes=20)
+            except Exception as e:
+                logger.warning(f"Could not calculate next run time from processing time: {e}")
+                # Fallback to simple 20-minute interval
+                automation_status["next_cycle"] = cycle_start + timedelta(minutes=20)
+        else:
+            # If cycle failed, retry in 5 minutes
+            automation_status["next_cycle"] = cycle_start + timedelta(minutes=5)
+        
         # Update status
         automation_status["last_cycle"] = cycle_start
-        automation_status["next_cycle"] = cycle_start + timedelta(minutes=20)
         
         # Store cycle result in Redis
         if redis_client:
@@ -182,14 +235,16 @@ async def run_automation_cycle():
                 "start_time": cycle_start.isoformat(),
                 "end_time": datetime.now().isoformat(),
                 "service": "web_service",
-                "workflow_completed": cycle_success
+                "workflow_completed": cycle_success,
+                "next_scheduled": automation_status["next_cycle"].isoformat() if automation_status["next_cycle"] else None
             }
             redis_client.lpush("cycle_history", json.dumps(cycle_result))
             redis_client.ltrim("cycle_history", 0, 99)  # Keep last 100 cycles
         
         logger.info("Automation cycle completed successfully", 
                    cycle=automation_status["cycle_count"],
-                   success=cycle_success)
+                   success=cycle_success,
+                   next_cycle=automation_status["next_cycle"].isoformat() if automation_status["next_cycle"] else "Not scheduled")
         
     except Exception as e:
         error_msg = f"Error in cycle {automation_status['cycle_count']}: {str(e)}"
@@ -378,13 +433,13 @@ async def start_automation(request: StartAutomationRequest, background_tasks: Ba
         
         # Start the scheduler
         if not scheduler.running:
-            # Schedule immediate first run, then every 20 minutes
+            # Schedule immediate first run (subsequent runs will be scheduled based on processing time)
             scheduler.add_job(
                 run_automation_cycle,
-                trigger=IntervalTrigger(minutes=20),
+                trigger='date',  # Single run, will reschedule itself based on processing time
+                run_date=datetime.now() + timedelta(seconds=10),  # Start after 10 seconds
                 id='gmail_automation',
-                replace_existing=True,
-                next_run_time=datetime.now()
+                replace_existing=True
             )
             scheduler.start()
         
@@ -452,20 +507,25 @@ async def startup_event():
     # Auto-start automation if credentials are available
     gmail_password = os.getenv('GMAIL_PASSWORD')
     if gmail_password:
-        logger.info("Auto-starting automation with environment credentials")
+        logger.info("Auto-starting Gmail workflow automation with environment credentials")
+        logger.info("This will run the complete workflow: OAuth → Gmail Processing → 20min cycles")
         automator = init_automator()
         
         if automator:
-            # Start scheduler immediately
+            # Start scheduler immediately (will reschedule itself based on processing time)
             scheduler.add_job(
                 run_automation_cycle,
-                trigger=IntervalTrigger(minutes=20),
+                trigger='date',  # Single run, will reschedule itself based on processing time
+                run_date=datetime.now() + timedelta(seconds=30),  # Start after 30 seconds
                 id='gmail_automation',
-                replace_existing=True,
-                next_run_time=datetime.now() + timedelta(seconds=30)  # Start after 30 seconds
+                replace_existing=True
             )
             scheduler.start()
             automation_status["running"] = True
+            logger.info("Background Gmail automation started - web service ready for requests")
+    else:
+        logger.info("No GMAIL_PASSWORD provided - automation will not auto-start")
+        logger.info("Use /start endpoint or web dashboard to start manually")
             
     logger.info("Service startup completed")
 

@@ -63,7 +63,13 @@ class GmailAutomationWorker:
         sys.exit(0)
     
     def init_redis(self):
-        """Initialize Redis connection"""
+        """Initialize Redis connection (optional)"""
+        # Check if Redis is explicitly disabled
+        if os.getenv('DISABLE_REDIS', '').lower() in ['true', '1', 'yes']:
+            logger.info("Worker Redis disabled via DISABLE_REDIS environment variable")
+            self.redis_client = None
+            return True
+            
         try:
             redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
             self.redis_client = redis.from_url(redis_url, decode_responses=True)
@@ -71,8 +77,11 @@ class GmailAutomationWorker:
             logger.info("Worker Redis connection established", redis_url=redis_url)
             return True
         except Exception as e:
-            logger.error("Worker failed to connect to Redis", error=str(e))
-            return False
+            logger.warning("Worker Redis not available - continuing without status tracking", 
+                          error=str(e),
+                          redis_url=os.getenv('REDIS_URL', 'redis://localhost:6379'))
+            self.redis_client = None
+            return True  # Changed from False to True to allow worker to continue
     
     def init_automator(self):
         """Initialize the Gmail automator"""
@@ -88,7 +97,8 @@ class GmailAutomationWorker:
                 headless=True,  # Always headless in cloud worker
                 port=8080,
                 password=gmail_password,
-                debug=False
+                debug=False,
+                base_url=os.getenv('APP_BASE_URL')  # Use environment variable for base URL
             )
             
             logger.info("Worker Gmail automator initialized", email=gmail_email)
@@ -277,9 +287,9 @@ class GmailAutomationWorker:
         """Start the worker"""
         logger.info("Starting Gmail Automation Worker")
         
-        # Initialize Redis
+        # Initialize Redis (optional)
         if not self.init_redis():
-            logger.error("Failed to initialize Redis, cannot start worker")
+            logger.error("Failed to initialize Redis - this shouldn't happen now")
             return False
         
         # Initialize automator

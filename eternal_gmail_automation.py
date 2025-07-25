@@ -237,7 +237,8 @@ if __name__ == "__main__":
         headless=args.headless,
         port=args.port,
         password=args.password,
-        debug=args.debug
+        debug=args.debug,
+        base_url=os.getenv('APP_BASE_URL')  # Use environment variable for base URL
     )
     
     if args.retry_delay:

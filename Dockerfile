@@ -6,6 +6,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:99
 ENV CHROME_BIN=/usr/bin/google-chrome-stable
 ENV CHROMEDRIVER_DIR=/usr/local/bin
+# Disable Redis by default since it's not included in this container
+# Set DISABLE_REDIS=false and provide REDIS_URL if you have external Redis
+ENV DISABLE_REDIS=true
+# Default app base URL - override with your deployment URL
+ENV APP_BASE_URL=http://localhost:8080
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \

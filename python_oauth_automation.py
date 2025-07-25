@@ -93,7 +93,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class GmailOAuthAutomator:
-    def __init__(self, headless=False, port=8080, password=None, debug=False, keep_open=0, skip_webdriver_manager=False):
+    def __init__(self, headless=False, port=8080, password=None, debug=False, keep_open=0, skip_webdriver_manager=False, base_url=None):
         """Initialize the OAuth automator"""
         self.target_email = TARGET_EMAIL
         self.password = password or TARGET_PASSWORD
@@ -102,6 +102,10 @@ class GmailOAuthAutomator:
         self.debug = debug
         self.keep_open = keep_open
         self.skip_webdriver_manager = skip_webdriver_manager
+        # Use provided base_url or environment variable, fallback to localhost
+        self.base_url = base_url or os.getenv('APP_BASE_URL', f'http://localhost:{port}')
+        if self.base_url.endswith('/'):
+            self.base_url = self.base_url.rstrip('/')  # Remove trailing slash
         self.driver = None
         self.oauth_triggered = False
         self.trigger_server = None
@@ -362,11 +366,10 @@ class GmailOAuthAutomator:
             try:
                 # Try multiple potential app URLs
                 potential_urls = [
-                    f"http://localhost:{self.port}",
-                    f"http://127.0.0.1:{self.port}",
-                    f"http://localhost:{self.port}/index.html",
-                    f"http://localhost:{self.port}/dashboard",
-                    f"http://localhost:{self.port}/login"
+                    self.base_url,
+                    f"{self.base_url}/index.html",
+                    f"{self.base_url}/dashboard",
+                    f"{self.base_url}/login"
                 ]
                 
                 success = False
@@ -2218,13 +2221,15 @@ class GmailOAuthAutomator:
                 oauth_complete_indicators = [
                     f"localhost:{self.port}" in current_url,
                     "127.0.0.1" in current_url,
+                    self.base_url in current_url,  # Check for base URL
                     "code=" in current_url,
                     "access_token=" in current_url,
                     "token=" in current_url,
                     "oauth/callback" in current_url,
                     "storagerelay" in current_url,  # Google's storage relay
                     current_url.startswith("http://localhost"),
-                    current_url.startswith("http://127.0.0.1")
+                    current_url.startswith("http://127.0.0.1"),
+                    current_url.startswith(self.base_url)  # Check for base URL prefix
                 ]
                 
                 if any(oauth_complete_indicators):
@@ -2279,6 +2284,7 @@ class GmailOAuthAutomator:
                             
                             if (f"localhost:{self.port}" in main_url or 
                                 "127.0.0.1" in main_url or 
+                                self.base_url in main_url or
                                 "code=" in main_url or 
                                 "token=" in main_url):
                                 logger.info("✅ OAuth completed in main window")
@@ -2344,7 +2350,8 @@ class GmailOAuthAutomator:
                 logger.info(f"🔍 Final main window URL: {final_url}")
                 
                 if (f"localhost:{self.port}" in final_url or 
-                    "127.0.0.1" in final_url):
+                    "127.0.0.1" in final_url or
+                    self.base_url in final_url):
                     logger.info("✅ OAuth may have completed despite timeout")
                     return True
         except Exception as e:
@@ -2911,6 +2918,7 @@ if __name__ == "__main__":
     parser.add_argument("--server", action="store_true", help="Run as trigger server")
     parser.add_argument("--password", type=str, help="Password for automatic login (use with caution)")
     parser.add_argument("--debug", action="store_true", help="Debug mode - keeps browser open longer and shows detailed logs")
+    parser.add_argument("--base-url", type=str, help="Base URL for the app (e.g., https://your-app.vercel.app)")
     parser.add_argument("--keep-open", type=int, default=0, help="Keep browser open for specified seconds after completion (useful for debugging)")
     parser.add_argument("--skip-webdriver-manager", action="store_true", help="Skip webdriver-manager and use faster startup methods")
     parser.add_argument("--workflow", action="store_true", help="Enable Gmail processing workflow after OAuth (continuous processing every 20 minutes)")
@@ -2927,7 +2935,8 @@ if __name__ == "__main__":
         password=args.password,
         debug=args.debug,
         keep_open=args.keep_open,
-        skip_webdriver_manager=args.skip_webdriver_manager
+        skip_webdriver_manager=args.skip_webdriver_manager,
+        base_url=getattr(args, 'base_url', None)  # Use getattr to handle hyphenated argument
     )
     
     if args.server:

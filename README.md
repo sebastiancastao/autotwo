@@ -36,6 +36,37 @@ Deploy to Render for 24/7 operation:
 
 📖 **[Complete Deployment Guide](DEPLOYMENT_GUIDE.md)**
 
+### Docker Deployment
+
+#### Option 1: Standalone Docker (No Redis)
+```bash
+# Build and run standalone container
+docker build -t gmail-automation .
+docker run -p 8080:8080 \
+  -e GMAIL_EMAIL="your-email@gmail.com" \
+  -e GMAIL_PASSWORD="your-password" \
+  -e APP_BASE_URL="https://your-app.vercel.app" \
+  gmail-automation
+```
+
+**Important**: Set `APP_BASE_URL` to your actual deployment URL (e.g., Vercel, Netlify, etc.) so the automation can connect to your app instead of localhost.
+
+#### Option 2: Docker Compose (With Redis for full features)
+```bash
+# Copy template and edit with your credentials
+cp env.docker.template .env
+# Edit .env with your actual Gmail credentials and APP_BASE_URL
+
+# Run with Redis for caching and history
+docker-compose up -d
+```
+
+**Important**: In your `.env` file, set `APP_BASE_URL` to your actual deployment URL (e.g., `https://your-app.vercel.app`) instead of localhost.
+
+**Redis Features:**
+- ✅ **With Redis**: Cycle history, error tracking, worker status
+- ⚠️ **Without Redis**: Basic automation only, no history/caching
+
 ## 📊 Web Dashboard
 
 Once deployed, access your dashboard at:

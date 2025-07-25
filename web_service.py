@@ -97,16 +97,25 @@ class CycleResult(BaseModel):
     success: bool
     error_message: Optional[str] = None
 
-# Initialize Redis connection
+# Initialize Redis connection (optional)
 def init_redis():
     global redis_client
+    
+    # Check if Redis is explicitly disabled
+    if os.getenv('DISABLE_REDIS', '').lower() in ['true', '1', 'yes']:
+        logger.info("Redis disabled via DISABLE_REDIS environment variable")
+        redis_client = None
+        return
+    
     try:
         redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
         redis_client = redis.from_url(redis_url, decode_responses=True)
         redis_client.ping()
         logger.info("Redis connection established", redis_url=redis_url)
     except Exception as e:
-        logger.error("Failed to connect to Redis", error=str(e))
+        logger.warning("Redis not available - continuing without caching/history features", 
+                      error=str(e), 
+                      redis_url=os.getenv('REDIS_URL', 'redis://localhost:6379'))
         redis_client = None
 
 # Initialize automation
@@ -124,7 +133,8 @@ def init_automator():
         headless=True,  # Always headless in cloud
         port=8080,
         password=gmail_password,
-        debug=False
+        debug=False,
+        base_url=os.getenv('APP_BASE_URL')  # Use environment variable for base URL
     )
     
     logger.info("Gmail automator initialized", email=gmail_email)

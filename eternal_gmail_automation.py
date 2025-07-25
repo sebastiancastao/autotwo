@@ -75,7 +75,7 @@ class EternalGmailAutomator(GmailOAuthAutomator):
                 # Step 4: Extract time range (always succeeds with fallback)
                 start_hour, end_hour = self.extract_time_range_eternal()
                 
-                # Step 5: Click Scan & Auto Process (non-blocking)
+                # Step 5: Click Scan & Auto-Process Emails (non-blocking)
                 if not self.click_scan_process_button_eternal():
                     logger.warning("⚠️ Could not click Scan & Process button, but continuing cycle...")
                     # Don't break - just continue to next cycle

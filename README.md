@@ -181,7 +181,7 @@ Every 20 minutes, the automation:
 1. ✅ **Confirms Gmail connection** is active
 2. 📅 **Sets date filter** to "last 20 minutes"
 3. ⏰ **Extracts time range** (e.g., 14:30 - 14:50)
-4. 🔄 **Clicks "Scan & Auto Process"** button
+4. 🔄 **Clicks "Scan & Auto-Process Emails"** button
 5. ⏳ **Waits 20 minutes** after end time
 6. 🔁 **Repeats forever** (ETERNAL loop)
 

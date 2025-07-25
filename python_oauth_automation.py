@@ -511,7 +511,9 @@ class GmailOAuthAutomator:
                     # Check if this looks like the Gmail+Drive button
                     text_lower = text.lower()
                     is_gmail_drive = any(phrase in text_lower for phrase in [
-                        'connect to gmail + drive', 
+                        'connect to gmail + drive',  # Exact expected text
+                        'connect gmail',  # Simplified (since disconnect is "Disconnect Gmail")
+                        'connect to gmail',  # Common variation
                         'connect to gmail and drive',
                         'connect gmail + drive',
                         'connect gmail drive',
@@ -543,7 +545,15 @@ class GmailOAuthAutomator:
             
             # Look for various types of connect buttons with improved selectors
             connect_selectors = [
-                # Specific "Connect to Gmail + Drive" button
+                # Exact text patterns (most reliable)
+                "//button[contains(text(), 'Connect to Gmail + Drive')]",  # Exact expected text
+                "//button[text()='Connect to Gmail + Drive']",  # Exact match
+                "//button[contains(text(), 'Connect Gmail')]",  # Simplified version
+                "//button[contains(text(), 'Connect to Gmail')]",  # Common variation
+                "//a[contains(text(), 'Connect to Gmail + Drive')]",  # In case it's a link
+                "//a[contains(text(), 'Connect Gmail')]",
+                
+                # Case-insensitive versions
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'connect to gmail + drive')]",
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'connect to gmail') and contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'drive')]",
                 "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'connect to gmail + drive')]",
@@ -2547,13 +2557,18 @@ class GmailOAuthAutomator:
             # Look for multiple indicators of successful connection
             success_indicators = []
             
-            # 1. Look for disconnect button variations
+            # 1. Look for disconnect button variations (exact text first)
             disconnect_selectors = [
+                "//button[contains(text(), 'Disconnect Gmail')]",  # Exact text from Midas Portal
+                "//button[text()='Disconnect Gmail']",  # Exact match
+                "//a[contains(text(), 'Disconnect Gmail')]",  # In case it's a link
+                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'disconnect gmail')]",
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'disconnect')]",
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'desconectar')]",
                 "//button[contains(text(), 'Disconnect')]",
                 "//button[contains(text(), 'Desconectar')]",
                 "//button[contains(@class, 'disconnect')]",
+                "//input[@value='Disconnect Gmail']",
                 "//input[@value='Disconnect']",
                 "//input[@value='Desconectar']"
             ]
@@ -2561,17 +2576,17 @@ class GmailOAuthAutomator:
             for selector in disconnect_selectors:
                 try:
                     elements = self.driver.find_elements(By.XPATH, selector)
-                    if elements:
-                        disconnect_button = elements[0]
-                        button_text = disconnect_button.text.strip()
-                        logger.info(f"✅ Found disconnect button: '{button_text}'")
-                        success_indicators.append("disconnect_button")
-                        break
+                                            if elements:
+                            disconnect_button = elements[0]
+                            button_text = disconnect_button.text.strip()
+                            logger.info(f"✅ Found disconnect button: '{button_text}' (Gmail connection confirmed)")
+                            success_indicators.append("disconnect_button")
+                            break
                 except Exception as e:
                     logger.debug(f"Selector {selector} failed: {e}")
                     continue
             
-            # 2. Look for "Scan & Auto Process" or similar buttons (indicates Gmail is connected)
+            # 2. Look for "Scan & Auto-Process Emails" or similar buttons (indicates Gmail is connected)
             process_selectors = [
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'scan')]",
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'process')]",
@@ -2632,26 +2647,28 @@ class GmailOAuthAutomator:
             
             # Direct button search first
             
-            # Look for "last 20 minutes" option - prioritize button elements
+            # Look for "Last 20 min" option - exact text from Midas Portal
             last_20_min_selectors = [
-                # Exact match for the specific button you identified
-                "//button[contains(text(), '🕐 Last 20 min')]",
-                "//button[contains(@title, 'Filter emails from the last 20 minutes')]",
-                "//button[@class='btn' and contains(text(), 'Last 20 min')]",
-                "//button[@class='btn' and contains(text(), '20 min')]",
-                # More general button matches
+                # Exact text patterns (most reliable)
+                "//button[contains(text(), 'Last 20 min')]",  # Exact text from Midas Portal
+                "//button[text()='Last 20 min']",  # Exact match
+                "//option[contains(text(), 'Last 20 min')]",  # In case it's a dropdown option
+                "//option[text()='Last 20 min']",  # Exact option match
+                "//div[contains(text(), 'Last 20 min')]",  # In case it's a div element
+                "//li[contains(text(), 'Last 20 min')]",  # In case it's a list item
+                "//a[contains(text(), 'Last 20 min')]",  # In case it's a link
+                
+                # Case-insensitive versions
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'last 20 min')]",
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '20 min')]",
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'last 20')]",
+                
+                # Fallback patterns
+                "//button[contains(@title, 'Last 20 min')]",
                 "//button[contains(@title, '20 min')]",
-                "//button[contains(@title, 'last 20')]",
-                # Fallback to other element types
                 "//option[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '20 min')]",
-                "//option[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'last 20')]",
                 "//div[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '20 min')]",
-                "//div[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'last 20')]",
-                "//li[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '20 min')]",
-                "//li[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'last 20')]"
+                "//li[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '20 min')]"
             ]
             
             for i, selector in enumerate(last_20_min_selectors):
@@ -2778,14 +2795,25 @@ class GmailOAuthAutomator:
             return start_hour, end_hour
     
     def click_scan_process_button(self):
-        """Click the Scan & Auto Process button"""
-        logger.info("🔄 Looking for Scan & Auto Process button...")
+        """Click the Scan & Auto-Process Emails button"""
+        logger.info("🔄 Looking for Scan & Auto-Process Emails button...")
         
         try:
             scan_process_selectors = [
+                # Exact text patterns (most reliable)
+                "//button[contains(text(), 'Scan & Auto-Process Emails')]",  # Exact text from Midas Portal
+                "//button[text()='Scan & Auto-Process Emails']",  # Exact match
+                "//button[contains(text(), 'Auto-Process Emails')]",  # Shortened version
+                "//a[contains(text(), 'Scan & Auto-Process Emails')]",  # In case it's a link
+                "//input[@value='Scan & Auto-Process Emails']",  # In case it's an input
+                
+                # Case-insensitive versions
+                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'scan & auto-process emails')]",
+                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'auto-process emails')]",
+                
+                # Fallback patterns (original selectors)
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'scan') and contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'auto') and contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'process')]",
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'scan') and contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'process')]",
-                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'auto process')]",
                 "//button[contains(text(), 'Scan & Auto Process')]",
                 "//button[contains(text(), 'Scan and Auto Process')]",
                 "//button[contains(text(), 'Auto Process')]",
@@ -2801,17 +2829,17 @@ class GmailOAuthAutomator:
                         button_text = button.text.strip()
                         logger.info(f"✅ Found scan & process button: '{button_text}'")
                         self.click_element_safely(button)
-                        logger.info("✅ Clicked Scan & Auto Process button")
+                        logger.info("✅ Clicked Scan & Auto-Process Emails button")
                         return True
                 except Exception as e:
                     logger.debug(f"Selector {selector} failed: {e}")
                     continue
             
-            logger.warning("⚠️ Could not find Scan & Auto Process button")
+            logger.warning("⚠️ Could not find Scan & Auto-Process Emails button")
             return False
             
         except Exception as e:
-            logger.error(f"❌ Error clicking Scan & Auto Process button: {e}")
+            logger.error(f"❌ Error clicking Scan & Auto-Process Emails button: {e}")
             return False
     
     def gmail_processing_cycle(self):
@@ -2831,7 +2859,7 @@ class GmailOAuthAutomator:
             # Step 3: Extract time range
             start_hour, end_hour = self.extract_time_range()
             
-            # Step 4: Click Scan & Auto Process
+                            # Step 4: Click Scan & Auto-Process Emails
             if not self.click_scan_process_button():
                 logger.error("❌ Could not click Scan & Process button")
                 return False

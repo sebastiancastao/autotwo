@@ -305,7 +305,7 @@ async def root():
             
             <h3>Configuration</h3>
             <p><strong>Target App:</strong> <a href="https://midas-portal-f853.vercel.app/gmail-processor" target="_blank">Midas Portal Gmail Processor</a></p>
-            <p><strong>Workflow:</strong> OAuth → Connect → Filter → Process → Wait 20min → Repeat</p>
+            <p><strong>Workflow:</strong> OAuth → Connect → "Last 20 min" Filter → "Scan & Auto-Process Emails" → Wait 20min → Repeat</p>
             
             <h3>API Endpoints</h3>
             <ul>

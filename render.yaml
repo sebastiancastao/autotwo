@@ -1,0 +1,101 @@
+services:
+  # Main Gmail Automation Web Service
+  - type: web
+    name: gmail-oauth-automation
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    numInstances: 1
+    buildCommand: echo "Using Docker build"
+    startCommand: python3 web_service.py
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: ENVIRONMENT
+        value: production
+      - key: CHROME_BIN
+        value: /usr/bin/google-chrome-stable
+      - key: CHROMEDRIVER_DIR
+        value: /usr/local/bin
+      - key: DISPLAY
+        value: :99
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        value: https://gmail-oauth-automation.onrender.com/oauth-callback.html
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GMAIL_PASSWORD
+        sync: false
+      - key: GMAIL_EMAIL
+        value: midasportal1234@gmail.com
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: gmail-automation-redis
+          property: connectionString
+    healthCheckPath: /health
+    autoDeploy: true
+
+  # Background Worker Service for Automation Tasks
+  - type: worker
+    name: gmail-automation-worker
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    startCommand: python3 worker.py
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: CHROME_BIN
+        value: /usr/bin/google-chrome-stable
+      - key: CHROMEDRIVER_DIR
+        value: /usr/local/bin
+      - key: DISPLAY
+        value: :99
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        value: https://gmail-oauth-automation.onrender.com/oauth-callback.html
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GMAIL_PASSWORD
+        sync: false
+      - key: GMAIL_EMAIL
+        value: midasportal1234@gmail.com
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: gmail-automation-redis
+          property: connectionString
+    autoDeploy: true
+
+  # Redis for Background Tasks and Caching
+  - type: redis
+    name: gmail-automation-redis
+    plan: starter
+    region: oregon
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
+
+databases:
+  - name: gmail-automation-postgres
+    databaseName: gmail_automation
+    user: admin
+    plan: starter
+    region: oregon
+    ipAllowList: [] 

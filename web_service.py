@@ -48,7 +48,7 @@ logger = structlog.get_logger()
 # Initialize FastAPI app
 app = FastAPI(
     title="Gmail OAuth Automation Service",
-    description="Cloud-based Gmail OAuth automation with eternal 20-minute processing cycles",
+    description="Cloud-based Gmail OAuth automation for Midas Portal with eternal 20-minute processing cycles",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
@@ -181,19 +181,15 @@ async def run_automation_cycle():
                 "success": cycle_success,
                 "start_time": cycle_start.isoformat(),
                 "end_time": datetime.now().isoformat(),
-                "start_hour": start_hour,
-                "end_hour": end_hour,
-                "connection_ok": connection_ok,
-                "filter_ok": filter_ok,
-                "process_ok": process_ok,
-                "success": True
+                "service": "web_service",
+                "workflow_completed": cycle_success
             }
             redis_client.lpush("cycle_history", json.dumps(cycle_result))
             redis_client.ltrim("cycle_history", 0, 99)  # Keep last 100 cycles
         
         logger.info("Automation cycle completed successfully", 
                    cycle=automation_status["cycle_count"],
-                   time_range=f"{start_hour} - {end_hour}")
+                   success=cycle_success)
         
     except Exception as e:
         error_msg = f"Error in cycle {automation_status['cycle_count']}: {str(e)}"
@@ -236,7 +232,7 @@ async def root():
     <body>
         <div class="container">
             <h1>🚀 Gmail OAuth Automation Service</h1>
-            <p>Cloud-based Gmail processing with eternal 20-minute cycles</p>
+            <p>Cloud-based Gmail processing for <a href="https://midas-portal-f853.vercel.app" target="_blank">Midas Portal</a> with eternal 20-minute cycles</p>
             
             <div id="status" class="status stopped">
                 <h3>Status: Loading...</h3>
@@ -251,6 +247,10 @@ async def root():
             
             <h3>Recent Activity</h3>
             <div id="logs" class="logs">Loading logs...</div>
+            
+            <h3>Configuration</h3>
+            <p><strong>Target App:</strong> <a href="https://midas-portal-f853.vercel.app/gmail-processor" target="_blank">Midas Portal Gmail Processor</a></p>
+            <p><strong>Workflow:</strong> OAuth → Connect → Filter → Process → Wait 20min → Repeat</p>
             
             <h3>API Endpoints</h3>
             <ul>
@@ -367,12 +367,13 @@ async def start_automation(request: StartAutomationRequest, background_tasks: Ba
     global automator, automation_status
     
     try:
-        # Initialize automator with provided password
+        # Initialize automator with provided password and base URL
         automator = EternalGmailAutomator(
             headless=request.headless,
             port=8080,
             password=request.password,
-            debug=request.debug
+            debug=request.debug,
+            base_url=os.getenv('APP_BASE_URL')  # Use environment variable for base URL
         )
         
         # Start the scheduler
@@ -486,8 +487,9 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
     host = os.getenv("HOST", "0.0.0.0")
     
-    logger.info("Starting Gmail OAuth Automation Web Service", 
-               host=host, port=port)
+    logger.info("Starting Gmail OAuth Automation Web Service for Midas Portal", 
+               host=host, port=port, 
+               target_app="https://midas-portal-f853.vercel.app")
     
     uvicorn.run(
         "web_service:app",

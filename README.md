@@ -93,11 +93,18 @@ python web_service.py
 # Then access: http://localhost:8080/
 ```
 
+**When to use Web Dashboard:**
+- 🌐 Need web UI for monitoring and control
+- 📊 Want visual status dashboard  
+- 🔄 Prefer manual start/stop controls
+- 👥 Multiple users need access
+
 **Web Dashboard Features:**
 - ✅ Real-time automation status
 - 📈 Cycle count and timing  
 - 📝 Recent activity logs
 - 🔄 Manual start/stop controls
+- 🎯 Configured for Midas Portal automatically
 - 📊 API documentation
 
 ## 🔧 Local Development

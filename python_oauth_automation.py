@@ -77,7 +77,7 @@ POLLING_INTERVAL = 2  # seconds
 # Google OAuth Configuration
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', '')
-GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI', 'http://localhost:8080/oauth-callback.html')
+GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI', 'https://midas-portal-f853.vercel.app/oauth-callback.html')
 GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo'
 
@@ -102,10 +102,13 @@ class GmailOAuthAutomator:
         self.debug = debug
         self.keep_open = keep_open
         self.skip_webdriver_manager = skip_webdriver_manager
-        # Use provided base_url or environment variable, fallback to localhost
-        self.base_url = base_url or os.getenv('APP_BASE_URL', f'http://localhost:{port}')
+        # Use provided base_url or environment variable, fallback to Midas Portal
+        self.base_url = base_url or os.getenv('APP_BASE_URL', 'https://midas-portal-f853.vercel.app')
         if self.base_url.endswith('/'):
             self.base_url = self.base_url.rstrip('/')  # Remove trailing slash
+        
+        # Log the base URL being used for debugging
+        logger.info(f"🌐 Base URL configured: {self.base_url}")
         self.driver = None
         self.oauth_triggered = False
         self.trigger_server = None
@@ -366,10 +369,9 @@ class GmailOAuthAutomator:
             try:
                 # Try multiple potential app URLs
                 potential_urls = [
+                    f"{self.base_url}/gmail-processor",  # Primary Gmail processing route
                     self.base_url,
-                    f"{self.base_url}/index.html",
-                    f"{self.base_url}/dashboard",
-                    f"{self.base_url}/login"
+                    f"{self.base_url}/index.html"
                 ]
                 
                 success = False
@@ -379,17 +381,29 @@ class GmailOAuthAutomator:
                         self.driver.get(app_url)
                         time.sleep(3)
                         
-                        # Check if page loaded successfully (not 404, etc.)
-                        if "404" not in self.driver.page_source and "not found" not in self.driver.page_source.lower():
+                        # Check if page loaded successfully
+                        page_source = self.driver.page_source.lower()
+                        current_url = self.driver.current_url
+                        page_title = self.driver.title
+                        
+                        logger.info(f"📍 Current URL: {current_url}")
+                        logger.info(f"📄 Page title: {page_title}")
+                        
+                        # Check for error indicators
+                        error_indicators = ["404", "not found", "page not found", "error 404", "doesn't exist"]
+                        has_error = any(indicator in page_source for indicator in error_indicators)
+                        
+                        if not has_error:
                             logger.info(f"✅ Successfully loaded: {app_url}")
                             
                             # Look for and click the Gmail connect button
                             if self.trigger_oauth_from_app():
                                 logger.info("✅ OAuth flow triggered from web app")
                                 return True
-                            break
+                            # Don't break here - continue trying other URLs if this one doesn't have the button
+                            success = True  # Mark that we found a working page
                         else:
-                            logger.warning(f"⚠️ URL {app_url} returned 404 or error")
+                            logger.warning(f"⚠️ URL {app_url} returned 404 or error (page content indicates error)")
                     except Exception as url_error:
                         logger.warning(f"⚠️ Failed to load {app_url}: {url_error}")
                         continue
@@ -458,16 +472,36 @@ class GmailOAuthAutomator:
             total_interactive = len(all_buttons) + len(all_links) + len(all_divs_with_role)
             logger.info(f"🔍 Found {len(all_buttons)} buttons, {len(all_links)} links, {len(all_divs_with_role)} div buttons = {total_interactive} total interactive elements")
             
-            # Log details of first 10 buttons
-            for i, button in enumerate(all_buttons[:10]):
+            # Log details of first 10 buttons and look specifically for Gmail+Drive button
+            gmail_drive_button_found = False
+            for i, button in enumerate(all_buttons[:15]):  # Check more buttons
                 try:
                     text = button.text.strip()
                     classes = button.get_attribute("class") or ""
                     onclick = button.get_attribute("onclick") or ""
                     id_attr = button.get_attribute("id") or ""
-                    logger.info(f"  Button {i+1}: text='{text}', classes='{classes}', id='{id_attr}', onclick='{onclick[:50]}'")
+                    
+                    # Check if this looks like the Gmail+Drive button
+                    text_lower = text.lower()
+                    is_gmail_drive = any(phrase in text_lower for phrase in [
+                        'connect to gmail + drive', 
+                        'connect to gmail and drive',
+                        'connect gmail + drive',
+                        'connect gmail drive',
+                        'gmail + drive',
+                        'gmail and drive'
+                    ])
+                    
+                    if is_gmail_drive:
+                        logger.info(f"🎯 FOUND Gmail+Drive button {i+1}: text='{text}', classes='{classes}', id='{id_attr}'")
+                        gmail_drive_button_found = True
+                    else:
+                        logger.info(f"  Button {i+1}: text='{text}', classes='{classes}', id='{id_attr}', onclick='{onclick[:50]}'")
                 except Exception as e:
                     logger.info(f"  Button {i+1}: Error reading attributes - {e}")
+            
+            if not gmail_drive_button_found:
+                logger.warning("⚠️ 'Connect to Gmail + Drive' button not found in visible buttons")
             
             # Also log some links that might be styled as buttons
             for i, link in enumerate(all_links[:5]):
@@ -482,6 +516,11 @@ class GmailOAuthAutomator:
             
             # Look for various types of connect buttons with improved selectors
             connect_selectors = [
+                # Specific "Connect to Gmail + Drive" button
+                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'connect to gmail + drive')]",
+                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'connect to gmail') and contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'drive')]",
+                "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'connect to gmail + drive')]",
+                "//div[@role='button'][contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'connect to gmail + drive')]",
                 # Gmail specific buttons
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'connect') and contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'gmail')]",
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'gmail')]",
@@ -2695,6 +2734,37 @@ class GmailOAuthAutomator:
             logger.error(f"❌ Error clicking Scan & Auto Process button: {e}")
             return False
     
+    def gmail_processing_cycle(self):
+        """Execute a single Gmail processing cycle (for headless/service use)"""
+        logger.info("🔄 Executing Gmail processing cycle...")
+        
+        try:
+            # Step 1: Confirm Gmail connection
+            if not self.confirm_gmail_connection():
+                logger.error("❌ Gmail connection not confirmed")
+                return False
+            
+            # Step 2: Set date filter to last 20 minutes
+            if not self.set_date_filter_last_20_minutes():
+                logger.warning("⚠️ Could not set date filter, continuing anyway...")
+            
+            # Step 3: Extract time range
+            start_hour, end_hour = self.extract_time_range()
+            
+            # Step 4: Click Scan & Auto Process
+            if not self.click_scan_process_button():
+                logger.error("❌ Could not click Scan & Process button")
+                return False
+            
+            logger.info("✅ Gmail processing cycle completed successfully")
+            logger.info(f"⏰ Time range processed: {start_hour} - {end_hour}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error in Gmail processing cycle: {e}")
+            return False
+
     def gmail_processing_workflow(self):
         """Main workflow for Gmail processing after OAuth completion"""
         logger.info("🔄 Starting Gmail processing workflow...")
@@ -2706,28 +2776,15 @@ class GmailOAuthAutomator:
             logger.info(f"🔄 Starting processing cycle #{cycle_count}")
             
             try:
-                # Step 1: Confirm Gmail connection
-                if not self.confirm_gmail_connection():
-                    logger.error("❌ Gmail connection not confirmed. Stopping workflow.")
-                    break
-                
-                # Step 2: Set date filter to last 20 minutes
-                if not self.set_date_filter_last_20_minutes():
-                    logger.warning("⚠️ Could not set date filter, continuing anyway...")
-                
-                # Step 3: Extract time range
-                start_hour, end_hour = self.extract_time_range()
-                
-                # Step 4: Click Scan & Auto Process
-                if not self.click_scan_process_button():
-                    logger.error("❌ Could not click Scan & Process button. Stopping workflow.")
+                # Execute single cycle
+                if not self.gmail_processing_cycle():
+                    logger.error("❌ Processing cycle failed. Stopping workflow.")
                     break
                 
                 logger.info(f"✅ Cycle #{cycle_count} completed successfully")
-                logger.info(f"⏰ Time range processed: {start_hour} - {end_hour}")
                 
-                # Step 5: Calculate next run time (20 minutes after end_hour)
-                next_run_time = self.calculate_next_run_time(end_hour)
+                # Step 5: Calculate next run time (20 minutes from now)
+                next_run_time = self.calculate_next_run_time_from_now()
                 logger.info(f"⏰ Next cycle scheduled for: {next_run_time}")
                 
                 # Step 6: Wait until next run time
@@ -2744,6 +2801,11 @@ class GmailOAuthAutomator:
                 time.sleep(300)  # Wait 5 minutes before retrying
                 continue
     
+    def calculate_next_run_time_from_now(self):
+        """Calculate the next run time (20 minutes from now)"""
+        from datetime import datetime, timedelta
+        return datetime.now() + timedelta(minutes=20)
+
     def calculate_next_run_time(self, end_hour):
         """Calculate the next run time (20 minutes after end_hour)"""
         from datetime import datetime, timedelta

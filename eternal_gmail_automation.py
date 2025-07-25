@@ -37,6 +37,8 @@ class EternalGmailAutomator(GmailOAuthAutomator):
         self.max_oauth_retries = 5  # Maximum OAuth retries before longer delay
         self.oauth_retry_count = 0
         
+    # Inherits gmail_processing_cycle() method from parent class for single-cycle execution
+        
     def eternal_workflow(self):
         """Eternal workflow that never stops"""
         logger.info("🚀 Starting ETERNAL Gmail processing workflow...")

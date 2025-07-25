@@ -160,46 +160,22 @@ class GmailAutomationWorker:
                     self._record_cycle_error(cycle_start, error_msg)
                     return
             
-            # Run the workflow steps with error handling
-            results = {}
-            
-            # Step 1: Confirm Gmail connection
+            # Run the complete Gmail processing cycle (same as non-headless workflow)
             try:
-                results["connection_ok"] = self.automator.confirm_gmail_connection_eternal()
-                logger.info("Worker Gmail connection check", success=results["connection_ok"])
+                cycle_success = self.automator.gmail_processing_cycle()
+                logger.info("Worker Gmail processing cycle", success=cycle_success)
+                
+                results = {
+                    "cycle_success": cycle_success,
+                    "workflow_completed": True
+                }
             except Exception as e:
-                results["connection_ok"] = False
-                logger.warning("Worker Gmail connection check failed", error=str(e))
-            
-            # Step 2: Set date filter
-            try:
-                results["filter_ok"] = self.automator.set_date_filter_last_20_minutes_eternal()
-                logger.info("Worker date filter set", success=results["filter_ok"])
-            except Exception as e:
-                results["filter_ok"] = False
-                logger.warning("Worker date filter failed", error=str(e))
-            
-            # Step 3: Extract time range
-            try:
-                start_hour, end_hour = self.automator.extract_time_range_eternal()
-                results["start_hour"] = start_hour
-                results["end_hour"] = end_hour
-                logger.info("Worker time range extracted", start=start_hour, end=end_hour)
-            except Exception as e:
-                # Fallback to current time
-                now = datetime.now()
-                start_time = now - timedelta(minutes=20)
-                results["start_hour"] = start_time.strftime("%H:%M")
-                results["end_hour"] = now.strftime("%H:%M")
-                logger.warning("Worker time range fallback", error=str(e))
-            
-            # Step 4: Click scan and process
-            try:
-                results["process_ok"] = self.automator.click_scan_process_button_eternal()
-                logger.info("Worker scan & process", success=results["process_ok"])
-            except Exception as e:
-                results["process_ok"] = False
-                logger.warning("Worker scan & process failed", error=str(e))
+                logger.error("Worker Gmail processing cycle failed", error=str(e))
+                results = {
+                    "cycle_success": False,
+                    "workflow_completed": False,
+                    "error": str(e)
+                }
             
             # Record successful cycle
             cycle_end = datetime.now()
@@ -210,9 +186,10 @@ class GmailAutomationWorker:
                 "start_time": cycle_start.isoformat(),
                 "end_time": cycle_end.isoformat(),
                 "duration_seconds": cycle_duration,
-                "success": True,
+                "success": results.get("cycle_success", False),
                 "worker_id": "worker-1",
-                **results
+                "workflow_completed": results.get("workflow_completed", False),
+                "error": results.get("error", None)
             }
             
             # Store in Redis

@@ -167,18 +167,8 @@ async def run_automation_cycle():
                 logger.error(error_msg)
                 return
         
-        # Run the workflow steps
-        # Step 1: Confirm Gmail connection
-        connection_ok = automator.confirm_gmail_connection_eternal()
-        
-        # Step 2: Set date filter
-        filter_ok = automator.set_date_filter_last_20_minutes_eternal()
-        
-        # Step 3: Extract time range
-        start_hour, end_hour = automator.extract_time_range_eternal()
-        
-        # Step 4: Click scan and process
-        process_ok = automator.click_scan_process_button_eternal()
+        # Run the complete Gmail processing cycle (same as non-headless workflow)
+        cycle_success = automator.gmail_processing_cycle()
         
         # Update status
         automation_status["last_cycle"] = cycle_start
@@ -188,6 +178,7 @@ async def run_automation_cycle():
         if redis_client:
             cycle_result = {
                 "cycle_number": automation_status["cycle_count"],
+                "success": cycle_success,
                 "start_time": cycle_start.isoformat(),
                 "end_time": datetime.now().isoformat(),
                 "start_hour": start_hour,

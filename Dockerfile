@@ -10,7 +10,7 @@ ENV CHROMEDRIVER_DIR=/usr/local/bin
 # Set DISABLE_REDIS=false and provide REDIS_URL if you have external Redis
 ENV DISABLE_REDIS=true
 # Default app base URL - override with your deployment URL
-ENV APP_BASE_URL=http://localhost:8080
+ENV APP_BASE_URL=https://midas-portal-f853.vercel.app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -90,12 +90,5 @@ COPY . .
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
-# Expose port for web service
-EXPOSE 8080
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
-
-# Start the application
-CMD ["python3", "web_service.py"] 
+# Start the Gmail automation workflow (equivalent to: python python_oauth_automation.py --password $GMAIL_PASSWORD --workflow --headless)
+CMD ["sh", "-c", "python3 python_oauth_automation.py --password \"${GMAIL_PASSWORD}\" --workflow --headless"] 

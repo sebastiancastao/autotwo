@@ -38,47 +38,66 @@ Deploy to Render for 24/7 operation:
 
 ### Docker Deployment
 
-#### Option 1: Standalone Docker (No Redis)
+#### Option 1: Standalone Docker (Gmail Workflow)
 ```bash
-# Build and run standalone container
+# Build and run Gmail automation workflow (equivalent to --workflow flag)
 docker build -t gmail-automation .
-docker run -p 8080:8080 \
+docker run \
   -e GMAIL_EMAIL="your-email@gmail.com" \
   -e GMAIL_PASSWORD="your-password" \
-  -e APP_BASE_URL="https://your-app.vercel.app" \
   gmail-automation
 ```
 
-**Important**: Set `APP_BASE_URL` to your actual deployment URL (e.g., Vercel, Netlify, etc.) so the automation can connect to your app instead of localhost.
+**Behavior**: Runs the complete Gmail processing workflow in headless mode, connecting to [Midas Portal](https://midas-portal-f853.vercel.app) automatically. Processes Gmail every 20 minutes continuously.
 
-#### Option 2: Docker Compose (With Redis for full features)
+**Quick Test:**
+```bash
+# Test with your credentials
+docker run \
+  -e GMAIL_EMAIL="midasportal1234@gmail.com" \
+  -e GMAIL_PASSWORD="outsourceai1234" \
+  gmail-automation
+```
+
+#### Option 2: Docker Compose (With Redis for history tracking)
 ```bash
 # Copy template and edit with your credentials
 cp env.docker.template .env
-# Edit .env with your actual Gmail credentials and APP_BASE_URL
+# Edit .env with your actual Gmail credentials
 
-# Run with Redis for caching and history
+# Run Gmail automation with Redis for cycle history
 docker-compose up -d
 ```
 
-**Important**: In your `.env` file, set `APP_BASE_URL` to your actual deployment URL (e.g., `https://your-app.vercel.app`) instead of localhost.
+**Behavior**: Same Gmail workflow as Option 1, but with Redis for storing cycle history and error tracking.
 
-**Redis Features:**
-- ✅ **With Redis**: Cycle history, error tracking, worker status
-- ⚠️ **Without Redis**: Basic automation only, no history/caching
+**Redis Benefits:**
+- ✅ **With Redis**: Stores cycle history, error tracking, detailed logs
+- ⚠️ **Without Redis**: Still runs full workflow, just no historical data
 
-## 📊 Web Dashboard
+## 📊 Monitoring & Logs
 
-Once deployed, access your dashboard at:
+### Docker Workflow Mode (Default)
+```bash
+# View live logs from Docker container
+docker logs -f <container-name>
+
+# View logs with timestamps
+docker logs -t <container-name>
 ```
-https://your-app-name.onrender.com/
+
+### Web Dashboard Mode (Optional)
+For web dashboard instead of workflow mode, run:
+```bash
+python web_service.py
+# Then access: http://localhost:8080/
 ```
 
-Features:
+**Web Dashboard Features:**
 - ✅ Real-time automation status
-- 📈 Cycle count and timing
+- 📈 Cycle count and timing  
 - 📝 Recent activity logs
-- 🔄 Start/stop controls
+- 🔄 Manual start/stop controls
 - 📊 API documentation
 
 ## 🔧 Local Development

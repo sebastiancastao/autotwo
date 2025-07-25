@@ -41,14 +41,33 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add
     && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
-# Install ChromeDriver
-RUN CHROME_VERSION=$(google-chrome --version | cut -d " " -f3 | cut -d "." -f1) \
-    && CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}") \
-    && wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip" \
+# Install ChromeDriver using the new Chrome for Testing API
+RUN CHROME_VERSION=$(google-chrome --version | cut -d " " -f3) \
+    && echo "Chrome version: $CHROME_VERSION" \
+    && MAJOR_VERSION=$(echo $CHROME_VERSION | cut -d "." -f1) \
+    && echo "Chrome major version: $MAJOR_VERSION" \
+    && if [ "$MAJOR_VERSION" -ge "115" ]; then \
+        # For Chrome 115+, use Chrome for Testing API
+        CHROMEDRIVER_URL=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/latest-versions-per-milestone-with-downloads.json" \
+            | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['milestones']['$MAJOR_VERSION']['downloads']['chromedriver'][0]['url'] if '$MAJOR_VERSION' in data['milestones'] and 'chromedriver' in data['milestones']['$MAJOR_VERSION']['downloads'] else '')") \
+        && if [ -n "$CHROMEDRIVER_URL" ]; then \
+            echo "Downloading ChromeDriver from: $CHROMEDRIVER_URL"; \
+            wget -O /tmp/chromedriver.zip "$CHROMEDRIVER_URL"; \
+        else \
+            echo "Using latest stable ChromeDriver"; \
+            wget -O /tmp/chromedriver.zip "https://storage.googleapis.com/chrome-for-testing-public/$(curl -s https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_STABLE)/linux64/chromedriver-linux64.zip"; \
+        fi; \
+    else \
+        # Fallback for older Chrome versions
+        CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${MAJOR_VERSION}") \
+        && wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip"; \
+    fi \
     && unzip /tmp/chromedriver.zip -d /tmp/ \
-    && mv /tmp/chromedriver ${CHROMEDRIVER_DIR}/chromedriver \
+    && find /tmp -name "chromedriver*" -type f -executable -exec mv {} ${CHROMEDRIVER_DIR}/chromedriver \; \
     && chmod +x ${CHROMEDRIVER_DIR}/chromedriver \
-    && rm /tmp/chromedriver.zip
+    && rm /tmp/chromedriver.zip \
+    && rm -rf /tmp/chromedriver* \
+    && ${CHROMEDRIVER_DIR}/chromedriver --version
 
 # Set working directory
 WORKDIR /app

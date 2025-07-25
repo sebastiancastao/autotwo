@@ -389,9 +389,36 @@ class GmailOAuthAutomator:
                         logger.info(f"📍 Current URL: {current_url}")
                         logger.info(f"📄 Page title: {page_title}")
                         
-                        # Check for error indicators
-                        error_indicators = ["404", "not found", "page not found", "error 404", "doesn't exist"]
-                        has_error = any(indicator in page_source for indicator in error_indicators)
+                        # Check for error indicators (precise detection to avoid false positives)
+                        page_title_lower = page_title.lower()
+                        
+                        # Check for specific error patterns in title (most reliable)
+                        title_error_patterns = [
+                            "404:",  # "404: This page could not be found"
+                            "not found",
+                            "page not found", 
+                            "404 - ",  # "404 - Page Not Found"
+                            "error 404"
+                        ]
+                        has_title_error = any(pattern in page_title_lower for pattern in title_error_patterns)
+                        
+                        # Only check page source for severe errors if title looks OK
+                        page_error_patterns = [
+                            "404 not found", 
+                            "this page could not be found",
+                            "site can't be reached",
+                            "connection refused",
+                            "server error"
+                        ]
+                        has_page_error = any(pattern in page_source for pattern in page_error_patterns) if not has_title_error else False
+                        
+                        has_error = has_title_error or has_page_error
+                        
+                        # Log detailed error detection for debugging
+                        if has_error:
+                            logger.warning(f"⚠️ Error detected - Title: '{page_title}', Title Error: {has_title_error}, Page Error: {has_page_error}")
+                        else:
+                            logger.info(f"✅ Page appears healthy - Title: '{page_title}'")
                         
                         if not has_error:
                             logger.info(f"✅ Successfully loaded: {app_url}")

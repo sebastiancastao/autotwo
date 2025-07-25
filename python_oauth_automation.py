@@ -2576,12 +2576,12 @@ class GmailOAuthAutomator:
             for selector in disconnect_selectors:
                 try:
                     elements = self.driver.find_elements(By.XPATH, selector)
-                                            if elements:
-                            disconnect_button = elements[0]
-                            button_text = disconnect_button.text.strip()
-                            logger.info(f"✅ Found disconnect button: '{button_text}' (Gmail connection confirmed)")
-                            success_indicators.append("disconnect_button")
-                            break
+                    if elements:
+                        disconnect_button = elements[0]
+                        button_text = disconnect_button.text.strip()
+                        logger.info(f"✅ Found disconnect button: '{button_text}' (Gmail connection confirmed)")
+                        success_indicators.append("disconnect_button")
+                        break
                 except Exception as e:
                     logger.debug(f"Selector {selector} failed: {e}")
                     continue

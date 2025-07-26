@@ -822,6 +822,32 @@ class GmailOAuthAutomator:
             logger.info("⏳ Waiting after password...")
             time.sleep(4)
             
+            # Step 2.5: Check for 2FA verification codes
+            logger.info("🔄 Step 2.5: Checking for 2FA verification...")
+            try:
+                twofa_result = self.handle_2fa_verification()
+                if twofa_result:
+                    logger.info("✅ 2FA verification handled")
+                else:
+                    logger.info("ℹ️ No 2FA verification required")
+                
+                # Log page state after 2FA
+                try:
+                    post_2fa_url = self.driver.current_url
+                    post_2fa_title = self.driver.title
+                    logger.info(f"📍 After 2FA check: {post_2fa_url}")
+                    logger.info(f"📄 Title: {post_2fa_title}")
+                except:
+                    pass
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ 2FA handling error (continuing): {e}")
+                # Don't return False here - continue with flow
+            
+            # Wait for 2FA to process
+            logger.info("⏳ Waiting after 2FA check...")
+            time.sleep(3)
+            
             # Step 3: Handle consent/permissions
             logger.info("🔄 Step 3: Consent screen...")
             try:
@@ -1925,6 +1951,153 @@ class GmailOAuthAutomator:
             # No password screen - likely already authenticated
             logger.info("✅ No password required (likely already authenticated)")
             return True
+    
+    def handle_2fa_verification(self):
+        """Handle 2FA verification codes and print them for the user"""
+        logger.info("🔍 Checking for 2FA verification codes...")
+        
+        try:
+            # Wait a moment for any 2FA pages to load
+            time.sleep(3)
+            
+            # Get current page info
+            current_url = self.driver.current_url
+            page_title = self.driver.title
+            page_source = self.driver.page_source.lower()
+            
+            logger.info(f"📍 Current URL: {current_url}")
+            logger.info(f"📄 Page title: {page_title}")
+            
+            # Check for 2FA-related keywords in page content
+            twofa_keywords = [
+                "verify", "verification", "code", "phone", "mobile", "sms", "text", 
+                "authenticator", "security", "factor", "confirm", "confirmation",
+                "enter the code", "verification code", "phone number", "mobile number",
+                "we sent", "sent to", "check your phone", "text message", "sms code"
+            ]
+            
+            has_2fa_content = any(keyword in page_source for keyword in twofa_keywords)
+            
+            if has_2fa_content:
+                logger.info("🔒 2FA verification page detected!")
+                
+                # Look for verification codes displayed on the page
+                verification_code_patterns = [
+                    # Common patterns for displayed verification codes
+                    r'\b\d{6}\b',  # 6-digit codes
+                    r'\b\d{8}\b',  # 8-digit codes  
+                    r'\b\d{4}\b',  # 4-digit codes
+                    r'\b\d{5}\b',  # 5-digit codes
+                    r'\b\d{7}\b'   # 7-digit codes
+                ]
+                
+                # Search for codes in page text
+                import re
+                page_text = self.driver.find_element(By.TAG_NAME, "body").text
+                
+                found_codes = []
+                for pattern in verification_code_patterns:
+                    matches = re.findall(pattern, page_text)
+                    for match in matches:
+                        # Filter out common non-code numbers (like years, phone numbers, etc.)
+                        if (len(match) >= 4 and len(match) <= 8 and 
+                            match not in ['2024', '2023', '2025', '1234', '0000']):
+                            found_codes.append(match)
+                
+                # Remove duplicates while preserving order
+                unique_codes = list(dict.fromkeys(found_codes))
+                
+                if unique_codes:
+                    logger.info("📱 VERIFICATION CODES FOUND ON PAGE:")
+                    for code in unique_codes:
+                        print(f"\n🔢 VERIFICATION CODE: {code}")
+                        print(f"📱 Please enter this code on your phone: {code}")
+                        logger.info(f"📱 VERIFICATION CODE DETECTED: {code}")
+                
+                # Look for specific 2FA elements and messages
+                verification_selectors = [
+                    "//div[contains(text(), 'verify')]",
+                    "//div[contains(text(), 'code')]", 
+                    "//span[contains(text(), 'verify')]",
+                    "//span[contains(text(), 'code')]",
+                    "//p[contains(text(), 'verify')]",
+                    "//p[contains(text(), 'code')]",
+                    "//div[contains(text(), 'phone')]",
+                    "//div[contains(text(), 'mobile')]",
+                    "//div[contains(text(), 'Check your')]",
+                    "//div[contains(text(), 'We sent')]"
+                ]
+                
+                verification_messages = []
+                for selector in verification_selectors:
+                    try:
+                        elements = self.driver.find_elements(By.XPATH, selector)
+                        for element in elements[:3]:  # Limit to first 3 matches per selector
+                            if element.is_displayed():
+                                text = element.text.strip()
+                                if text and len(text) < 200:  # Reasonable length limit
+                                    verification_messages.append(text)
+                    except:
+                        continue
+                
+                # Remove duplicates and show verification messages
+                unique_messages = list(dict.fromkeys(verification_messages))
+                if unique_messages:
+                    logger.info("📲 2FA Messages found on page:")
+                    for message in unique_messages[:5]:  # Show max 5 messages
+                        logger.info(f"   📱 {message}")
+                        print(f"📱 2FA MESSAGE: {message}")
+                
+                # Look for verification code input fields
+                verification_input_selectors = [
+                    "//input[@type='tel']",
+                    "//input[@type='number']",
+                    "//input[@type='text'][contains(@placeholder, 'code')]",
+                    "//input[@type='text'][contains(@placeholder, 'verify')]",
+                    "//input[contains(@id, 'code')]",
+                    "//input[contains(@id, 'verify')]",
+                    "//input[contains(@name, 'code')]",
+                    "//input[contains(@name, 'verify')]",
+                    "//input[contains(@class, 'code')]",
+                    "//input[contains(@class, 'verify')]"
+                ]
+                
+                verification_input_found = False
+                for selector in verification_input_selectors:
+                    try:
+                        elements = self.driver.find_elements(By.XPATH, selector)
+                        if elements:
+                            for element in elements:
+                                if element.is_displayed():
+                                    placeholder = element.get_attribute('placeholder') or 'No placeholder'
+                                    input_type = element.get_attribute('type') or 'text'
+                                    logger.info(f"🔍 Found verification input field: type='{input_type}', placeholder='{placeholder}'")
+                                    verification_input_found = True
+                                    break
+                        if verification_input_found:
+                            break
+                    except:
+                        continue
+                
+                if verification_input_found:
+                    print(f"\n🔑 VERIFICATION INPUT FIELD DETECTED")
+                    print(f"📱 Please check your phone for the verification code and enter it manually")
+                    logger.info("🔑 Verification input field detected - user needs to enter code manually")
+                
+                # Wait longer for user to complete 2FA
+                logger.info("⏳ Waiting 30 seconds for 2FA completion...")
+                print(f"\n⏳ Waiting 30 seconds for you to complete 2FA verification...")
+                time.sleep(30)
+                
+                return True  # 2FA page was detected and handled
+            
+            else:
+                logger.info("ℹ️ No 2FA verification required - continuing...")
+                return False  # No 2FA needed
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Error in 2FA verification handling: {e}")
+            return False
     
     def handle_consent_screen(self):
         """Handle OAuth consent/permissions screen"""

@@ -2543,20 +2543,20 @@ class GmailOAuthAutomator:
     def confirm_gmail_connection(self):
         """Confirm that Gmail connection is successful by checking for various success indicators"""
         logger.info("🔍 Confirming Gmail connection status...")
-        
+
         try:
             # Wait for page to load and update
             time.sleep(3)
-            
+
             # Get current page info for debugging
             current_url = self.driver.current_url
             page_title = self.driver.title
             logger.info(f"📍 Current URL: {current_url}")
             logger.info(f"📄 Page title: {page_title}")
-            
+
             # Look for multiple indicators of successful connection
             success_indicators = []
-            
+
             # 1. Look for disconnect button variations (exact text first)
             disconnect_selectors = [
                 "//button[contains(text(), 'Disconnect Gmail')]",  # Exact text from Midas Portal
@@ -2572,7 +2572,7 @@ class GmailOAuthAutomator:
                 "//input[@value='Disconnect']",
                 "//input[@value='Desconectar']"
             ]
-            
+
             for selector in disconnect_selectors:
                 try:
                     elements = self.driver.find_elements(By.XPATH, selector)
@@ -2585,7 +2585,7 @@ class GmailOAuthAutomator:
                 except Exception as e:
                     logger.debug(f"Selector {selector} failed: {e}")
                     continue
-            
+
             # 2. Look for "Scan & Auto-Process Emails" or similar buttons (indicates Gmail is connected)
             process_selectors = [
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'scan')]",
@@ -2593,7 +2593,7 @@ class GmailOAuthAutomator:
                 "//button[contains(text(), 'Scan')]",
                 "//button[contains(text(), 'Process')]"
             ]
-            
+
             for selector in process_selectors:
                 try:
                     elements = self.driver.find_elements(By.XPATH, selector)
@@ -2606,21 +2606,21 @@ class GmailOAuthAutomator:
                 except Exception as e:
                     logger.debug(f"Process selector {selector} failed: {e}")
                     continue
-            
+
             # 3. Check for Gmail-related content on page
             page_source = self.driver.page_source.lower()
             gmail_indicators = ["gmail", "email", "connected", "authenticated"]
-            
+
             found_indicators = [indicator for indicator in gmail_indicators if indicator in page_source]
             if found_indicators:
                 logger.info(f"✅ Found Gmail-related content: {found_indicators}")
                 success_indicators.append("gmail_content")
-            
+
             # 4. Check if we're on Gmail processor page (good sign)
             if "gmail-processor" in current_url or "gmail processor" in page_title.lower():
                 logger.info("✅ On Gmail Processor page (good sign)")
                 success_indicators.append("gmail_processor_page")
-            
+
             # Evaluate success
             if success_indicators:
                 logger.info(f"✅ Gmail connection confirmed via indicators: {success_indicators}")
@@ -2630,7 +2630,7 @@ class GmailOAuthAutomator:
                 logger.info("💡 This might be normal if the interface is different than expected")
                 # Return True anyway to continue the workflow (non-blocking)
                 return True
-            
+
         except Exception as e:
             logger.error(f"❌ Error confirming Gmail connection: {e}")
             # Return True to continue workflow even if confirmation fails
@@ -2642,10 +2642,21 @@ class GmailOAuthAutomator:
         logger.info("📅 Setting date filter to last 20 minutes...")
         
         try:
+            # Wait for page to fully load
+            time.sleep(3)
+            
+            # Debug: Log current page info
+            current_url = self.driver.current_url
+            page_title = self.driver.title
+            logger.info(f"📍 Current URL: {current_url}")
+            logger.info(f"📄 Page title: {page_title}")
+            
+            # Debug: Scan for all potential date filter elements on page
+            logger.info("🔍 Scanning page for all potential date filter elements...")
+            self._debug_scan_date_filter_elements()
+            
             # First, try to find the specific 20-minute button directly
             logger.info("🔍 Looking for 20-minute filter button directly...")
-            
-            # Direct button search first
             
             # Look for "Last 20 min" option - exact text from Midas Portal
             last_20_min_selectors = [
@@ -2704,6 +2715,80 @@ class GmailOAuthAutomator:
         except Exception as e:
             logger.error(f"❌ Error setting date filter: {e}")
             return False
+    
+    def _debug_scan_date_filter_elements(self):
+        """Debug method to scan page for potential date filter elements"""
+        try:
+            # Scan for elements containing time-related keywords
+            time_keywords = ['min', 'hour', 'day', 'week', 'month', 'time', 'last', 'recent', '20', 'filter', 'date']
+            
+            logger.info("🔍 Scanning for buttons with time-related text...")
+            buttons = self.driver.find_elements(By.TAG_NAME, "button")
+            logger.info(f"   Found {len(buttons)} total buttons on page")
+            
+            relevant_buttons = []
+            for i, button in enumerate(buttons[:20]):  # Limit to first 20 buttons
+                try:
+                    button_text = button.text.strip()
+                    button_class = button.get_attribute('class') or 'none'
+                    if any(keyword in button_text.lower() for keyword in time_keywords):
+                        relevant_buttons.append(f"Button {i+1}: '{button_text}' (class: {button_class})")
+                except:
+                    continue
+            
+            if relevant_buttons:
+                logger.info("📋 Found buttons with time-related text:")
+                for btn_info in relevant_buttons:
+                    logger.info(f"   {btn_info}")
+            else:
+                logger.info("   No buttons with time-related keywords found")
+            
+            # Check dropdown options
+            logger.info("🔍 Scanning for dropdown options...")
+            options = self.driver.find_elements(By.TAG_NAME, "option")
+            logger.info(f"   Found {len(options)} total options on page")
+            
+            relevant_options = []
+            for i, option in enumerate(options[:20]):  # Limit to first 20 options
+                try:
+                    option_text = option.text.strip()
+                    if any(keyword in option_text.lower() for keyword in time_keywords):
+                        relevant_options.append(f"Option {i+1}: '{option_text}'")
+                except:
+                    continue
+            
+            if relevant_options:
+                logger.info("📋 Found options with time-related text:")
+                for opt_info in relevant_options:
+                    logger.info(f"   {opt_info}")
+            else:
+                logger.info("   No options with time-related keywords found")
+            
+            # Check divs and spans
+            logger.info("🔍 Scanning for divs/spans with time-related text...")
+            divs_spans = self.driver.find_elements(By.XPATH, "//div | //span")
+            logger.info(f"   Found {len(divs_spans)} total divs/spans on page")
+            
+            relevant_divs = []
+            for i, element in enumerate(divs_spans[:50]):  # Limit to first 50 elements
+                try:
+                    element_text = element.text.strip()
+                    element_tag = element.tag_name
+                    element_class = element.get_attribute('class') or 'none'
+                    if any(keyword in element_text.lower() for keyword in time_keywords) and len(element_text) < 100:
+                        relevant_divs.append(f"{element_tag.upper()} {i+1}: '{element_text}' (class: {element_class})")
+                except:
+                    continue
+            
+            if relevant_divs:
+                logger.info("📋 Found divs/spans with time-related text:")
+                for div_info in relevant_divs[:10]:  # Show only first 10
+                    logger.info(f"   {div_info}")
+            else:
+                logger.info("   No divs/spans with time-related keywords found")
+                
+        except Exception as e:
+            logger.warning(f"Debug scan failed: {e}")
     
     def extract_time_range(self):
         """Extract the start and end time from the current filter selection"""
@@ -2799,6 +2884,19 @@ class GmailOAuthAutomator:
         logger.info("🔄 Looking for Scan & Auto-Process Emails button...")
         
         try:
+            # Wait for page to fully load
+            time.sleep(3)
+            
+            # Debug: Log current page info
+            current_url = self.driver.current_url
+            page_title = self.driver.title
+            logger.info(f"📍 Current URL: {current_url}")
+            logger.info(f"📄 Page title: {page_title}")
+            
+            # Debug: Scan for all potential scan/process elements on page
+            logger.info("🔍 Scanning page for all potential scan/process elements...")
+            self._debug_scan_process_elements()
+            
             scan_process_selectors = [
                 # Exact text patterns (most reliable)
                 "//button[contains(text(), 'Scan & Auto-Process Emails')]",  # Exact text from Midas Portal
@@ -2841,6 +2939,82 @@ class GmailOAuthAutomator:
         except Exception as e:
             logger.error(f"❌ Error clicking Scan & Auto-Process Emails button: {e}")
             return False
+    
+    def _debug_scan_process_elements(self):
+        """Debug method to scan page for potential scan/process elements"""
+        try:
+            # Scan for elements containing scan/process-related keywords
+            process_keywords = ['scan', 'process', 'auto', 'email', 'start', 'run', 'execute', 'submit', 'go']
+            
+            logger.info("🔍 Scanning for buttons with scan/process-related text...")
+            buttons = self.driver.find_elements(By.TAG_NAME, "button")
+            logger.info(f"   Found {len(buttons)} total buttons on page")
+            
+            relevant_buttons = []
+            for i, button in enumerate(buttons[:20]):  # Limit to first 20 buttons
+                try:
+                    button_text = button.text.strip()
+                    button_class = button.get_attribute('class') or 'none'
+                    button_type = button.get_attribute('type') or 'none'
+                    if any(keyword in button_text.lower() for keyword in process_keywords):
+                        relevant_buttons.append(f"Button {i+1}: '{button_text}' (class: {button_class}, type: {button_type})")
+                except:
+                    continue
+            
+            if relevant_buttons:
+                logger.info("📋 Found buttons with scan/process-related text:")
+                for btn_info in relevant_buttons:
+                    logger.info(f"   {btn_info}")
+            else:
+                logger.info("   No buttons with scan/process keywords found")
+            
+            # Check input elements
+            logger.info("🔍 Scanning for input elements...")
+            inputs = self.driver.find_elements(By.TAG_NAME, "input")
+            logger.info(f"   Found {len(inputs)} total inputs on page")
+            
+            relevant_inputs = []
+            for i, input_elem in enumerate(inputs[:20]):  # Limit to first 20 inputs
+                try:
+                    input_value = input_elem.get_attribute('value') or ''
+                    input_type = input_elem.get_attribute('type') or 'none'
+                    input_class = input_elem.get_attribute('class') or 'none'
+                    if any(keyword in input_value.lower() for keyword in process_keywords):
+                        relevant_inputs.append(f"Input {i+1}: value='{input_value}' (type: {input_type}, class: {input_class})")
+                except:
+                    continue
+            
+            if relevant_inputs:
+                logger.info("📋 Found inputs with scan/process-related values:")
+                for inp_info in relevant_inputs:
+                    logger.info(f"   {inp_info}")
+            else:
+                logger.info("   No inputs with scan/process keywords found")
+            
+            # Check links
+            logger.info("🔍 Scanning for links with scan/process-related text...")
+            links = self.driver.find_elements(By.TAG_NAME, "a")
+            logger.info(f"   Found {len(links)} total links on page")
+            
+            relevant_links = []
+            for i, link in enumerate(links[:20]):  # Limit to first 20 links
+                try:
+                    link_text = link.text.strip()
+                    link_class = link.get_attribute('class') or 'none'
+                    if any(keyword in link_text.lower() for keyword in process_keywords) and len(link_text) < 100:
+                        relevant_links.append(f"Link {i+1}: '{link_text}' (class: {link_class})")
+                except:
+                    continue
+            
+            if relevant_links:
+                logger.info("📋 Found links with scan/process-related text:")
+                for link_info in relevant_links[:10]:  # Show only first 10
+                    logger.info(f"   {link_info}")
+            else:
+                logger.info("   No links with scan/process keywords found")
+                
+        except Exception as e:
+            logger.warning(f"Debug scan failed: {e}")
     
     def gmail_processing_cycle(self):
         """Execute a single Gmail processing cycle (for headless/service use)"""

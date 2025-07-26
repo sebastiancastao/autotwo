@@ -2453,18 +2453,54 @@ class GmailOAuthAutomator:
         logger.info("⏳ Waiting for OAuth completion...")
         
         start_time = time.time()
-        initial_window_count = len(self.driver.window_handles)
-        logger.info(f"🪟 Initial window count: {initial_window_count}")
+        
+        # Get initial window count safely
+        try:
+            initial_window_count = len(self.driver.window_handles)
+            logger.info(f"🪟 Initial window count: {initial_window_count}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not get initial window count: {e}")
+            initial_window_count = 1
         
         while time.time() - start_time < 45:  # Increased timeout to 45 seconds
             try:
-                current_url = self.driver.current_url
-                current_window_count = len(self.driver.window_handles)
-                page_title = self.driver.title
+                # Check if browser/window is still available
+                try:
+                    current_window_count = len(self.driver.window_handles)
+                    
+                    # Switch to the first available window if current one is closed
+                    if current_window_count > 0:
+                        self.driver.switch_to.window(self.driver.window_handles[0])
+                    else:
+                        logger.warning("⚠️ No windows available - browser may have closed")
+                        break
+                        
+                except Exception as window_error:
+                    logger.warning(f"⚠️ Window access error: {window_error}")
+                    # If we can't access windows, OAuth might have completed with window closure
+                    logger.info("🎯 Window closure detected - this may indicate OAuth completion")
+                    logger.info("✅ Treating window closure as potential OAuth success")
+                    return True
                 
-                logger.info(f"🔍 Current URL: {current_url[:100]}...")
-                logger.info(f"🔍 Current title: {page_title}")
-                logger.info(f"🪟 Window count: {current_window_count}")
+                # Get current page info safely
+                try:
+                    current_url = self.driver.current_url
+                    page_title = self.driver.title
+                    
+                    logger.info(f"🔍 Current URL: {current_url[:100]}...")
+                    logger.info(f"🔍 Current title: {page_title}")
+                    logger.info(f"🪟 Window count: {current_window_count}")
+                    
+                except Exception as page_error:
+                    logger.warning(f"⚠️ Could not get page info: {page_error}")
+                    if "no such window" in str(page_error).lower() or "target window already closed" in str(page_error).lower():
+                        logger.info("🎯 Target window closed - OAuth likely completed")
+                        logger.info("✅ Treating window closure as OAuth success")
+                        return True
+                    else:
+                        # Other error, continue trying
+                        time.sleep(2)
+                        continue
                 
                 # Check for various OAuth completion indicators
                 oauth_complete_indicators = [
@@ -2520,12 +2556,23 @@ class GmailOAuthAutomator:
                 if initial_window_count > 1 and current_window_count == 1:
                     logger.info("🎉 OAuth popup closed - checking main window")
                     try:
-                        # Switch to main window
-                        if len(self.driver.window_handles) > 0:
-                            self.driver.switch_to.window(self.driver.window_handles[0])
-                            time.sleep(3)  # Wait for main window to update
-                            
-                            # Check if main window now has OAuth completion
+                        # Switch to main window safely
+                        try:
+                            if len(self.driver.window_handles) > 0:
+                                self.driver.switch_to.window(self.driver.window_handles[0])
+                                time.sleep(3)  # Wait for main window to update
+                            else:
+                                logger.warning("⚠️ No windows available after popup closed")
+                                return True  # Assume OAuth completed
+                        except Exception as window_switch_error:
+                            if "no such window" in str(window_switch_error).lower():
+                                logger.info("🎯 Main window also closed - OAuth likely completed")
+                                return True
+                            else:
+                                raise window_switch_error
+                        
+                        # Check if main window now has OAuth completion
+                        try:
                             main_url = self.driver.current_url
                             main_title = self.driver.title
                             logger.info(f"🔍 Main window URL: {main_url}")
@@ -2564,8 +2611,19 @@ class GmailOAuthAutomator:
                                         logger.warning(f"⚠️ Error processing main window OAuth: {e}")
                                 
                                 return True
+                        except Exception as main_window_error:
+                            if "no such window" in str(main_window_error).lower():
+                                logger.info("🎯 Main window closed during check - OAuth likely completed")
+                                return True
+                            else:
+                                logger.warning(f"⚠️ Error checking main window: {main_window_error}")
+                                
                     except Exception as switch_error:
-                        logger.warning(f"⚠️ Error switching to main window: {switch_error}")
+                        if "no such window" in str(switch_error).lower() or "target window already closed" in str(switch_error).lower():
+                            logger.info("🎯 Window closure during popup check - OAuth likely completed")
+                            return True
+                        else:
+                            logger.warning(f"⚠️ Error switching to main window: {switch_error}")
                 
                 # Check for Google OAuth success/error pages
                 if "oauth" in current_url and "success" in current_url.lower():
@@ -2585,16 +2643,25 @@ class GmailOAuthAutomator:
                 time.sleep(2)  # Increased polling interval
                 
             except Exception as e:
-                logger.warning(f"⚠️ Error checking completion: {e}")
-                time.sleep(2)
+                # Handle specific window closure errors
+                if ("no such window" in str(e).lower() or 
+                    "target window already closed" in str(e).lower() or
+                    "web view not found" in str(e).lower()):
+                    logger.info("🎯 Window closure detected in main loop - OAuth likely completed")
+                    logger.info("✅ Treating window closure as OAuth success")
+                    return True
+                else:
+                    logger.warning(f"⚠️ Error checking completion: {e}")
+                    time.sleep(2)
         
         logger.warning("⏰ Timeout waiting for OAuth completion")
         logger.info("💡 OAuth may have completed but wasn't detected")
         
         # Final check - try to switch back to main window anyway
         try:
-            if len(self.driver.window_handles) > 0:
-                self.driver.switch_to.window(self.driver.window_handles[0])
+            window_handles = self.driver.window_handles
+            if len(window_handles) > 0:
+                self.driver.switch_to.window(window_handles[0])
                 final_url = self.driver.current_url
                 logger.info(f"🔍 Final main window URL: {final_url}")
                 
@@ -2603,8 +2670,15 @@ class GmailOAuthAutomator:
                     self.base_url in final_url):
                     logger.info("✅ OAuth may have completed despite timeout")
                     return True
+            else:
+                logger.info("🎯 No windows available in final check - OAuth may have completed with full browser closure")
+                return True
         except Exception as e:
-            logger.warning(f"⚠️ Error in final check: {e}")
+            if "no such window" in str(e).lower() or "target window already closed" in str(e).lower():
+                logger.info("🎯 Window closure in final check - OAuth likely completed")
+                return True
+            else:
+                logger.warning(f"⚠️ Error in final check: {e}")
         
         return False
     

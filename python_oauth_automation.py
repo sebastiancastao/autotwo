@@ -2540,102 +2540,106 @@ class GmailOAuthAutomator:
         
         return success
     
-    def confirm_gmail_connection(self):
-        """Confirm that Gmail connection is successful by checking for various success indicators"""
+    def confirm_gmail_connection(self, max_retries=3):
+        """Confirm that Gmail connection is successful by checking for 'Disconnect Gmail' button"""
         logger.info("🔍 Confirming Gmail connection status...")
 
-        try:
-            # Wait for page to load and update
-            time.sleep(3)
+        # Disconnect button selectors (prioritize exact text)
+        disconnect_selectors = [
+            "//button[contains(text(), 'Disconnect Gmail')]",  # Exact text from Midas Portal
+            "//button[text()='Disconnect Gmail']",  # Exact match
+            "//a[contains(text(), 'Disconnect Gmail')]",  # In case it's a link
+            "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'disconnect gmail')]",
+            "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'disconnect')]",
+            "//button[contains(text(), 'Disconnect')]",
+            "//input[@value='Disconnect Gmail']",
+            "//input[@value='Disconnect']"
+        ]
 
-            # Get current page info for debugging
-            current_url = self.driver.current_url
-            page_title = self.driver.title
-            logger.info(f"📍 Current URL: {current_url}")
-            logger.info(f"📄 Page title: {page_title}")
-
-            # Look for multiple indicators of successful connection
-            success_indicators = []
-
-            # 1. Look for disconnect button variations (exact text first)
-            disconnect_selectors = [
-                "//button[contains(text(), 'Disconnect Gmail')]",  # Exact text from Midas Portal
-                "//button[text()='Disconnect Gmail']",  # Exact match
-                "//a[contains(text(), 'Disconnect Gmail')]",  # In case it's a link
-                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'disconnect gmail')]",
-                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'disconnect')]",
-                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'desconectar')]",
-                "//button[contains(text(), 'Disconnect')]",
-                "//button[contains(text(), 'Desconectar')]",
-                "//button[contains(@class, 'disconnect')]",
-                "//input[@value='Disconnect Gmail']",
-                "//input[@value='Disconnect']",
-                "//input[@value='Desconectar']"
-            ]
-
-            for selector in disconnect_selectors:
-                try:
-                    elements = self.driver.find_elements(By.XPATH, selector)
-                    if elements:
-                        disconnect_button = elements[0]
-                        button_text = disconnect_button.text.strip()
-                        logger.info(f"✅ Found disconnect button: '{button_text}' (Gmail connection confirmed)")
-                        success_indicators.append("disconnect_button")
-                        break
-                except Exception as e:
-                    logger.debug(f"Selector {selector} failed: {e}")
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"🔄 Connection confirmation attempt {attempt + 1}/{max_retries}")
+                
+                # Wait for page to load
+                time.sleep(5)
+                
+                # Get current page info
+                current_url = self.driver.current_url
+                page_title = self.driver.title
+                logger.info(f"📍 Current URL: {current_url}")
+                logger.info(f"📄 Page title: {page_title}")
+                
+                # Refresh page to ensure UI updates after OAuth (important!)
+                logger.info("🔄 Refreshing page to ensure UI updates after OAuth...")
+                self.driver.refresh()
+                time.sleep(5)  # Wait for refresh to complete
+                
+                # Log page after refresh
+                refreshed_url = self.driver.current_url
+                refreshed_title = self.driver.title
+                logger.info(f"📍 After refresh - URL: {refreshed_url}")
+                logger.info(f"📄 After refresh - Title: {refreshed_title}")
+                
+                # Search for disconnect button
+                logger.info("🔍 Searching for 'Disconnect Gmail' button...")
+                
+                for i, selector in enumerate(disconnect_selectors):
+                    try:
+                        logger.info(f"   Trying selector {i+1}/{len(disconnect_selectors)}: {selector[:50]}...")
+                        elements = self.driver.find_elements(By.XPATH, selector)
+                        
+                        if elements:
+                            disconnect_button = elements[0]
+                            button_text = disconnect_button.text.strip()
+                            button_class = disconnect_button.get_attribute('class') or 'none'
+                            
+                            logger.info(f"✅ FOUND 'Disconnect Gmail' button!")
+                            logger.info(f"   Text: '{button_text}'")
+                            logger.info(f"   Class: {button_class}")
+                            logger.info("🎉 Gmail connection confirmed - proceeding with workflow!")
+                            return True
+                            
+                    except Exception as e:
+                        logger.debug(f"   Selector {i+1} failed: {e}")
+                        continue
+                
+                # If we reach here, disconnect button was not found
+                logger.warning(f"⚠️ 'Disconnect Gmail' button not found on attempt {attempt + 1}")
+                
+                # If this is not the last attempt, try to trigger OAuth again
+                if attempt < max_retries - 1:
+                    logger.info("🔄 Disconnect button not found - will retry OAuth process...")
+                    
+                    # Navigate back to Gmail processor page and look for Connect button
+                    logger.info("🌐 Navigating to Gmail processor page...")
+                    gmail_processor_url = f"{self.base_url}/gmail-processor"
+                    self.driver.get(gmail_processor_url)
+                    time.sleep(5)
+                    
+                    # Try to find and click Connect button to retry OAuth
+                    logger.info("🔍 Looking for 'Connect to Gmail + Drive' button to retry OAuth...")
+                    connect_success = self.trigger_oauth_from_app()
+                    
+                    if not connect_success:
+                        logger.warning("⚠️ Could not find Connect button to retry OAuth")
+                        continue  # Try next attempt anyway
+                    
+                    # Wait for OAuth to complete
+                    logger.info("⏳ Waiting for OAuth to complete...")
+                    time.sleep(10)
+                    
+                    # Continue to next attempt to check for disconnect button
                     continue
-
-            # 2. Look for "Scan & Auto-Process Emails" or similar buttons (indicates Gmail is connected)
-            process_selectors = [
-                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'scan')]",
-                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'process')]",
-                "//button[contains(text(), 'Scan')]",
-                "//button[contains(text(), 'Process')]"
-            ]
-
-            for selector in process_selectors:
-                try:
-                    elements = self.driver.find_elements(By.XPATH, selector)
-                    if elements:
-                        process_button = elements[0]
-                        button_text = process_button.text.strip()
-                        logger.info(f"✅ Found processing button: '{button_text}' (indicates Gmail connected)")
-                        success_indicators.append("process_button")
-                        break
-                except Exception as e:
-                    logger.debug(f"Process selector {selector} failed: {e}")
-                    continue
-
-            # 3. Check for Gmail-related content on page
-            page_source = self.driver.page_source.lower()
-            gmail_indicators = ["gmail", "email", "connected", "authenticated"]
-
-            found_indicators = [indicator for indicator in gmail_indicators if indicator in page_source]
-            if found_indicators:
-                logger.info(f"✅ Found Gmail-related content: {found_indicators}")
-                success_indicators.append("gmail_content")
-
-            # 4. Check if we're on Gmail processor page (good sign)
-            if "gmail-processor" in current_url or "gmail processor" in page_title.lower():
-                logger.info("✅ On Gmail Processor page (good sign)")
-                success_indicators.append("gmail_processor_page")
-
-            # Evaluate success
-            if success_indicators:
-                logger.info(f"✅ Gmail connection confirmed via indicators: {success_indicators}")
-                return True
-            else:
-                logger.warning("⚠️ No Gmail connection indicators found - but continuing anyway")
-                logger.info("💡 This might be normal if the interface is different than expected")
-                # Return True anyway to continue the workflow (non-blocking)
-                return True
-
-        except Exception as e:
-            logger.error(f"❌ Error confirming Gmail connection: {e}")
-            # Return True to continue workflow even if confirmation fails
-            logger.info("💡 Continuing workflow despite confirmation error")
-            return True
+                
+            except Exception as e:
+                logger.error(f"❌ Error in connection confirmation attempt {attempt + 1}: {e}")
+                continue
+        
+        # If we exhausted all retries
+        logger.error("❌ Failed to confirm Gmail connection after all retries")
+        logger.error("❌ 'Disconnect Gmail' button not found - Gmail may not be connected")
+        logger.info("💡 This means OAuth may have failed or the UI hasn't updated yet")
+        return False
     
     def set_date_filter_last_20_minutes(self):
         """Set the date filter to last 20 minutes"""
@@ -3021,9 +3025,11 @@ class GmailOAuthAutomator:
         logger.info("🔄 Executing Gmail processing cycle...")
         
         try:
-            # Step 1: Confirm Gmail connection
+            # Step 1: Confirm Gmail connection (includes page refresh and OAuth retry if needed)
             if not self.confirm_gmail_connection():
-                logger.error("❌ Gmail connection not confirmed")
+                logger.error("❌ Gmail connection not confirmed - 'Disconnect Gmail' button not found")
+                logger.error("❌ This means OAuth failed or the page hasn't updated properly")
+                logger.info("💡 The automation will retry the entire cycle in a few minutes")
                 return False
             
             # Step 2: Set date filter to last 20 minutes

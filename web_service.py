@@ -197,12 +197,23 @@ async def run_automation_cycle():
             try:
                 start_hour, end_hour = automator.extract_time_range()
                 next_run_time = automator.calculate_next_run_time(end_hour)
-                
+        
                 # Update scheduler for next run based on actual processing time
                 if scheduler.running:
                     try:
-                        # Remove existing job and reschedule based on processing time
-                        scheduler.remove_job('gmail_automation')
+                        # Remove existing job if it exists, then reschedule
+                        try:
+                            existing_job = scheduler.get_job('gmail_automation')
+                            if existing_job:
+                                scheduler.remove_job('gmail_automation')
+                                logger.info("📅 Removed existing scheduled job")
+                            else:
+                                logger.info("📅 No existing job to remove")
+                        except Exception:
+                            # Job doesn't exist, which is fine
+                            logger.info("📅 No existing job found (normal for first run)")
+                        
+                        # Schedule next run based on processing time
                         scheduler.add_job(
                             run_automation_cycle,
                             trigger='date',  # Single run at specific time

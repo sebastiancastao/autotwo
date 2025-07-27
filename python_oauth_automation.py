@@ -43,6 +43,7 @@ except Exception as e:
 try:
     from selenium import webdriver
     from selenium.webdriver.common.by import By
+    from selenium.webdriver.common.keys import Keys
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
     from selenium.webdriver.chrome.options import Options
@@ -2157,13 +2158,44 @@ class GmailOAuthAutomator:
                 
                 if verification_input_found:
                     print(f"\n🔑 VERIFICATION INPUT FIELD DETECTED")
-                    print(f"📱 Please check your phone for the verification code and enter it manually")
-                    logger.info("🔑 Verification input field detected - user needs to enter code manually")
-                
-                # Wait longer for user to complete 2FA
-                logger.info("⏳ Waiting 30 seconds for 2FA completion...")
-                print(f"\n⏳ Waiting 30 seconds for you to complete 2FA verification...")
-                time.sleep(30)
+                    print(f"📱 Please check your phone for the verification code")
+                    logger.info("🔑 Verification input field detected - waiting for user input")
+                    
+                    # Set verification status for web UI (if available)
+                    try:
+                        # Try to import and update web service status
+                        import sys
+                        import os
+                        
+                        # Check if running in web service context
+                        if 'web_service' in sys.modules:
+                            web_service = sys.modules['web_service']
+                            web_service.automation_status["needs_verification"] = True
+                            web_service.automation_status["verification_message"] = "Please enter the verification code from your phone"
+                            logger.info("🌐 Updated web UI to show verification code input")
+                            
+                            # Wait for verification code from web UI
+                            verification_code = self.wait_for_verification_code_from_ui()
+                            
+                        else:
+                            # Fallback to console input for non-web environments
+                            logger.info("💻 Running in console mode - requesting manual input")
+                            verification_code = self.wait_for_verification_code_console()
+                            
+                    except Exception as ui_error:
+                        logger.warning(f"⚠️ Could not access web UI, falling back to console: {ui_error}")
+                        verification_code = self.wait_for_verification_code_console()
+                    
+                    # Enter the verification code if we got one
+                    if verification_code:
+                        success = self.enter_verification_code(verification_code)
+                        if success:
+                            logger.info("✅ Verification code entered successfully")
+                            return True
+                        else:
+                            logger.warning("⚠️ Failed to enter verification code")
+                    else:
+                        logger.warning("⚠️ No verification code received")
                 
                 return True  # 2FA page was detected and handled
             
@@ -2173,6 +2205,166 @@ class GmailOAuthAutomator:
                 
         except Exception as e:
             logger.warning(f"⚠️ Error in 2FA verification handling: {e}")
+            return False
+    
+    def wait_for_verification_code_from_ui(self):
+        """Wait for verification code from web UI"""
+        logger.info("⏳ Waiting for verification code from web UI...")
+        
+        try:
+            import sys
+            web_service = sys.modules['web_service']
+            
+            # Wait up to 5 minutes for verification code
+            max_wait_time = 300  # 5 minutes
+            check_interval = 2   # Check every 2 seconds
+            elapsed_time = 0
+            
+            while elapsed_time < max_wait_time:
+                # Check if verification code is available
+                if web_service.automation_status.get("verification_code"):
+                    code = web_service.automation_status["verification_code"]
+                    # Clear the code from status after retrieving it
+                    web_service.automation_status["verification_code"] = None
+                    web_service.automation_status["needs_verification"] = False
+                    web_service.automation_status["verification_message"] = f"Using verification code: {code}"
+                    
+                    logger.info(f"✅ Received verification code from UI: {code}")
+                    return code
+                
+                time.sleep(check_interval)
+                elapsed_time += check_interval
+                
+                # Log progress every 30 seconds
+                if elapsed_time % 30 == 0:
+                    logger.info(f"⏳ Still waiting for verification code... ({elapsed_time}s/{max_wait_time}s)")
+            
+            logger.warning("⏰ Timeout waiting for verification code from UI")
+            return None
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Error waiting for UI verification code: {e}")
+            return None
+    
+    def wait_for_verification_code_console(self):
+        """Wait for verification code from console input"""
+        logger.info("💻 Waiting for verification code via console...")
+        
+        try:
+            print(f"\n🔑 MANUAL INPUT REQUIRED")
+            print(f"📱 Please check your phone for the verification code")
+            print(f"⌨️  Enter the verification code below:")
+            
+            # Give user time to see the message
+            time.sleep(2)
+            
+            # Try to get input with timeout (fallback to basic input if timeout not available)
+            try:
+                import signal
+                
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("Input timeout")
+                
+                # Set timeout for 5 minutes
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(300)  # 5 minutes
+                
+                code = input("Enter verification code: ").strip()
+                signal.alarm(0)  # Cancel the alarm
+                
+                if code and code.isdigit() and len(code) >= 4:
+                    logger.info(f"✅ Received verification code from console: {code}")
+                    return code
+                else:
+                    logger.warning("⚠️ Invalid verification code format")
+                    return None
+                    
+            except (ImportError, AttributeError, TimeoutError):
+                # Fallback for systems without signal support or timeout
+                logger.info("⏳ Waiting 60 seconds for manual verification completion...")
+                time.sleep(60)
+                return None
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Error getting console verification code: {e}")
+            return None
+    
+    def enter_verification_code(self, code):
+        """Enter verification code into the detected input field"""
+        logger.info(f"⌨️ Entering verification code: {code}")
+        
+        try:
+            # Look for verification code input fields again
+            verification_input_selectors = [
+                "//input[@type='tel']",
+                "//input[@type='number']",
+                "//input[@type='text'][contains(@placeholder, 'code')]",
+                "//input[@type='text'][contains(@placeholder, 'verify')]",
+                "//input[contains(@id, 'code')]",
+                "//input[contains(@id, 'verify')]",
+                "//input[contains(@name, 'code')]",
+                "//input[contains(@name, 'verify')]",
+                "//input[contains(@class, 'code')]",
+                "//input[contains(@class, 'verify')]"
+            ]
+            
+            for selector in verification_input_selectors:
+                try:
+                    elements = self.driver.find_elements(By.XPATH, selector)
+                    for element in elements:
+                        if element.is_displayed() and element.is_enabled():
+                            logger.info(f"✅ Found verification input field, entering code")
+                            
+                            # Scroll into view and focus
+                            self.driver.execute_script("arguments[0].scrollIntoView(true);", element)
+                            time.sleep(0.5)
+                            element.click()
+                            time.sleep(0.5)
+                            
+                            # Clear any existing content
+                            element.clear()
+                            time.sleep(0.3)
+                            
+                            # Enter the verification code
+                            element.send_keys(code)
+                            time.sleep(1)
+                            
+                            # Try to submit (look for submit button or press Enter)
+                            try:
+                                element.send_keys(Keys.RETURN)
+                                logger.info("✅ Pressed Enter to submit verification code")
+                            except:
+                                # Look for submit button
+                                submit_selectors = [
+                                    "//button[contains(text(), 'Verify')]",
+                                    "//button[contains(text(), 'Submit')]",
+                                    "//button[contains(text(), 'Continue')]",
+                                    "//button[contains(text(), 'Next')]",
+                                    "//button[@type='submit']",
+                                    "//input[@type='submit']"
+                                ]
+                                
+                                for submit_selector in submit_selectors:
+                                    try:
+                                        submit_btn = self.driver.find_element(By.XPATH, submit_selector)
+                                        if submit_btn.is_displayed() and submit_btn.is_enabled():
+                                            self.click_element_safely(submit_btn)
+                                            logger.info("✅ Clicked submit button for verification code")
+                                            break
+                                    except:
+                                        continue
+                            
+                            time.sleep(3)  # Wait for submission to process
+                            logger.info("✅ Verification code entered and submitted")
+                            return True
+                except:
+                    continue
+            
+            logger.warning("⚠️ Could not find verification input field to enter code")
+            return False
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Error entering verification code: {e}")
             return False
     
     def handle_consent_screen(self):

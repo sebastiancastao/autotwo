@@ -82,7 +82,10 @@ automation_status = {
     "next_cycle": None,
     "cycle_count": 0,
     "errors": [],
-    "oauth_completed": False
+    "oauth_completed": False,
+    "needs_verification": False,
+    "verification_message": "",
+    "verification_code": None
 }
 
 # Pydantic models
@@ -93,6 +96,9 @@ class AutomationStatus(BaseModel):
     cycle_count: int
     errors: List[str]
     oauth_completed: bool
+    needs_verification: bool = False
+    verification_message: str = ""
+    verification_code: Optional[str] = None
 
 class StartAutomationRequest(BaseModel):
     password: str = Field(..., description="Gmail account password")
@@ -105,6 +111,9 @@ class CycleResult(BaseModel):
     end_time: str
     success: bool
     error_message: Optional[str] = None
+
+class VerificationCodeRequest(BaseModel):
+    verification_code: str = Field(..., description="6-8 digit verification code from 2FA")
 
 # Initialize Redis connection (optional)
 def init_redis():
@@ -288,6 +297,7 @@ async def root():
             .status { padding: 20px; margin: 20px 0; border-radius: 5px; }
             .running { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
             .stopped { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+            .verification { background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 20px; margin: 20px 0; border-radius: 5px; }
             .btn { padding: 10px 20px; margin: 10px 5px; border: none; border-radius: 5px; cursor: pointer; }
             .btn-primary { background: #007bff; color: white; }
             .btn-danger { background: #dc3545; color: white; }
@@ -303,6 +313,17 @@ async def root():
             <div id="status" class="status stopped">
                 <h3>Status: Loading...</h3>
                 <p>Fetching current status...</p>
+            </div>
+            
+            <!-- Verification Code Input Section -->
+            <div id="verification-section" class="verification" style="display: none;">
+                <h3>🔑 2FA Verification Required</h3>
+                <p>Please enter the verification code from your phone:</p>
+                <div style="margin: 15px 0;">
+                    <input type="text" id="verification-code" placeholder="Enter 6-digit code" maxlength="8" style="padding: 10px; font-size: 16px; width: 200px; text-align: center; border: 2px solid #007bff; border-radius: 5px;">
+                    <button class="btn btn-primary" onclick="submitVerificationCode()" style="margin-left: 10px;">Submit Code</button>
+                </div>
+                <p id="verification-message" style="color: #666; font-style: italic;"></p>
             </div>
             
             <div>
@@ -343,8 +364,65 @@ async def root():
                         <p><strong>Next Cycle:</strong> ${status.next_cycle || 'Not scheduled'}</p>
                         ${status.errors.length > 0 ? `<p><strong>Recent Errors:</strong> ${status.errors.slice(-3).join(', ')}</p>` : ''}
                     `;
+                    
+                    // Show/hide verification section based on status
+                    const verificationSection = document.getElementById('verification-section');
+                    if (status.needs_verification) {
+                        verificationSection.style.display = 'block';
+                        document.getElementById('verification-message').innerText = status.verification_message || 'Please check your phone for the verification code.';
+                    } else {
+                        verificationSection.style.display = 'none';
+                    }
                 } catch (error) {
                     console.error('Failed to fetch status:', error);
+                }
+            }
+            
+            async function submitVerificationCode() {
+                const codeInput = document.getElementById('verification-code');
+                const code = codeInput.value.trim();
+                const messageDiv = document.getElementById('verification-message');
+                
+                if (!code) {
+                    messageDiv.innerText = 'Please enter a verification code.';
+                    messageDiv.style.color = '#dc3545';
+                    return;
+                }
+                
+                try {
+                    messageDiv.innerText = 'Submitting verification code...';
+                    messageDiv.style.color = '#007bff';
+                    
+                    const response = await fetch('/submit-verification', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ verification_code: code })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok) {
+                        messageDiv.innerText = 'Verification code submitted successfully!';
+                        messageDiv.style.color = '#28a745';
+                        codeInput.value = '';
+                        
+                        // Hide verification section after successful submission
+                        setTimeout(() => {
+                            document.getElementById('verification-section').style.display = 'none';
+                        }, 2000);
+                        
+                        // Refresh status
+                        refreshStatus();
+                    } else {
+                        messageDiv.innerText = result.detail || 'Failed to submit verification code.';
+                        messageDiv.style.color = '#dc3545';
+                    }
+                } catch (error) {
+                    messageDiv.innerText = 'Error submitting verification code.';
+                    messageDiv.style.color = '#dc3545';
+                    console.error('Error submitting verification:', error);
                 }
             }
             
@@ -402,6 +480,38 @@ async def root():
             // Auto-refresh every 30 seconds
             setInterval(refreshStatus, 30000);
             setInterval(loadLogs, 30000);
+            
+            // Handle Enter key for verification code input
+            document.addEventListener('DOMContentLoaded', function() {
+                const codeInput = document.getElementById('verification-code');
+                if (codeInput) {
+                    codeInput.addEventListener('keypress', function(e) {
+                        if (e.key === 'Enter') {
+                            submitVerificationCode();
+                        }
+                    });
+                    
+                    // Auto-focus the input when it becomes visible
+                    const observer = new MutationObserver(function(mutations) {
+                        mutations.forEach(function(mutation) {
+                            if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+                                const verificationSection = document.getElementById('verification-section');
+                                if (verificationSection && verificationSection.style.display !== 'none') {
+                                    setTimeout(() => codeInput.focus(), 100);
+                                }
+                            }
+                        });
+                    });
+                    
+                    const verificationSection = document.getElementById('verification-section');
+                    if (verificationSection) {
+                        observer.observe(verificationSection, {
+                            attributes: true,
+                            attributeFilter: ['style']
+                        });
+                    }
+                }
+            });
             
             // Initial load
             refreshStatus();
@@ -485,6 +595,37 @@ async def stop_automation():
     except Exception as e:
         logger.error("Failed to stop automation", error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to stop automation: {str(e)}")
+
+@app.post("/submit-verification")
+async def submit_verification_code(request: VerificationCodeRequest):
+    """Submit verification code for 2FA"""
+    global automation_status
+    
+    try:
+        code = request.verification_code.strip()
+        
+        # Validate code format (4-8 digits)
+        if not code.isdigit() or len(code) < 4 or len(code) > 8:
+            raise HTTPException(status_code=400, detail="Verification code must be 4-8 digits")
+        
+        # Store the verification code
+        automation_status["verification_code"] = code
+        automation_status["needs_verification"] = False
+        automation_status["verification_message"] = f"Code {code} received and will be used for authentication"
+        
+        logger.info(f"Verification code received from UI: {code}")
+        
+        return {
+            "message": "Verification code received successfully",
+            "code": code,
+            "status": "success"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to process verification code", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to process verification code: {str(e)}")
 
 @app.get("/cycles")
 async def get_cycle_history():

@@ -20,10 +20,12 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import json
+import base64
+import io
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import uvicorn
@@ -147,13 +149,23 @@ def init_automator():
         logger.warning("Gmail password not provided via environment variable")
         return None
     
+    # For cloud deployment, use headless mode but ensure screenshots work
+    # Set environment variable ENABLE_SCREENSHOTS=true to enable screenshot capability
+    enable_screenshots = os.getenv('ENABLE_SCREENSHOTS', 'true').lower() in ['true', '1', 'yes']
+    
     automator = EternalGmailAutomator(
-        headless=True,  # Always headless in cloud
+        headless=True,  # Always headless in cloud, but screenshots still work
         port=8080,
         password=gmail_password,
         debug=False,
         base_url=os.getenv('APP_BASE_URL')  # Use environment variable for base URL
     )
+    
+    # Log browser initialization info
+    if hasattr(automator, 'driver') and automator.driver:
+        logger.info("Browser driver initialized successfully for screenshots")
+    else:
+        logger.warning("Browser driver not available - screenshots may not work")
     
     logger.info("Gmail automator initialized", email=gmail_email)
     return automator
@@ -298,6 +310,7 @@ async def root():
             .running { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
             .stopped { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
             .verification { background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 20px; margin: 20px 0; border-radius: 5px; }
+            .browser-view { background: #e7f3ff; border: 1px solid #b3d7ff; color: #004085; padding: 20px; margin: 20px 0; border-radius: 5px; }
             .btn { padding: 10px 20px; margin: 10px 5px; border: none; border-radius: 5px; cursor: pointer; }
             .btn-primary { background: #007bff; color: white; }
             .btn-danger { background: #dc3545; color: white; }
@@ -326,6 +339,39 @@ async def root():
                 <p id="verification-message" style="color: #666; font-style: italic;"></p>
             </div>
             
+            <!-- Live Browser View Section -->
+            <div id="browser-view-section" class="browser-view">
+                <h3>🖥️ Live Browser View</h3>
+                <div style="text-align: center; margin: 15px 0;">
+                    <button class="btn btn-primary" onclick="toggleBrowserView()" id="browser-toggle-btn">Show Browser View</button>
+                    <button class="btn btn-primary" onclick="refreshScreenshot()" id="refresh-screenshot-btn" style="display: none;">Refresh Screenshot</button>
+                    <button class="btn btn-primary" onclick="testScreenshotEndpoint()" id="test-screenshot-btn">Test Browser Connection</button>
+                </div>
+                <div id="browser-info" style="margin: 10px 0; font-size: 14px; color: #333; background: #f8f9fa; padding: 10px; border-radius: 5px; border: 1px solid #dee2e6; display: none;">
+                    <p style="margin: 5px 0;"><strong>🌐 URL:</strong> <span id="current-url">-</span></p>
+                    <p style="margin: 5px 0;"><strong>📄 Title:</strong> <span id="page-title">-</span></p>
+                    <p style="margin: 5px 0;"><strong>🕐 Last Updated:</strong> <span id="screenshot-timestamp">-</span></p>
+                    <p style="margin: 5px 0; font-size: 12px; color: #666;"><em>Auto-refreshes every 5 seconds when visible</em></p>
+                </div>
+                <div id="screenshot-container" style="text-align: center; border: 2px solid #dee2e6; border-radius: 5px; padding: 10px; background: #f8f9fa; display: none;">
+                    <img id="browser-screenshot" style="max-width: 100%; height: auto; border-radius: 5px;" alt="Browser Screenshot">
+                    <div id="screenshot-loading" style="padding: 40px; color: #666;">
+                        <p>📷 Loading browser view...</p>
+                    </div>
+                    <div id="screenshot-error" style="padding: 40px; color: #dc3545; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px; margin: 10px 0; display: none;">
+                        <p><strong>❌ Unable to capture browser view</strong></p>
+                        <p style="font-size: 14px; margin: 10px 0;" id="error-message"></p>
+                        <p style="font-size: 12px; color: #666;">
+                            <strong>Troubleshooting:</strong><br>
+                            • Make sure automation is running<br>
+                            • Check if browser is active<br>
+                            • Try the "Test Browser Connection" button<br>
+                            • Wait for OAuth process to start
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
             <div>
                 <button class="btn btn-primary" onclick="startAutomation()">Start Automation</button>
                 <button class="btn btn-danger" onclick="stopAutomation()">Stop Automation</button>
@@ -343,6 +389,8 @@ async def root():
             <ul>
                 <li><a href="/status">GET /status</a> - Get automation status</li>
                 <li><a href="/cycles">GET /cycles</a> - Get cycle history</li>
+                <li><a href="/screenshot">GET /screenshot</a> - Get browser screenshot</li>
+                <li><a href="/screenshot/test">GET /screenshot/test</a> - Test browser connection</li>
                 <li><a href="/health">GET /health</a> - Health check</li>
                 <li><a href="/docs">GET /docs</a> - API Documentation</li>
             </ul>
@@ -463,6 +511,111 @@ async def root():
                 }
             }
             
+            let browserViewVisible = false;
+            let screenshotInterval = null;
+            
+            async function toggleBrowserView() {
+                const container = document.getElementById('screenshot-container');
+                const info = document.getElementById('browser-info');
+                const toggleBtn = document.getElementById('browser-toggle-btn');
+                const refreshBtn = document.getElementById('refresh-screenshot-btn');
+                
+                if (!browserViewVisible) {
+                    // Show browser view
+                    container.style.display = 'block';
+                    info.style.display = 'block';
+                    refreshBtn.style.display = 'inline-block';
+                    toggleBtn.innerText = 'Hide Browser View';
+                    browserViewVisible = true;
+                    
+                    // Start auto-refresh
+                    refreshScreenshot();
+                    screenshotInterval = setInterval(refreshScreenshot, 5000); // Refresh every 5 seconds
+                } else {
+                    // Hide browser view
+                    container.style.display = 'none';
+                    info.style.display = 'none';
+                    refreshBtn.style.display = 'none';
+                    toggleBtn.innerText = 'Show Browser View';
+                    browserViewVisible = false;
+                    
+                    // Stop auto-refresh
+                    if (screenshotInterval) {
+                        clearInterval(screenshotInterval);
+                        screenshotInterval = null;
+                    }
+                }
+            }
+            
+            async function testScreenshotEndpoint() {
+                try {
+                    const response = await fetch('/screenshot/test');
+                    const data = await response.json();
+                    
+                    if (data.status === 'success') {
+                        alert(`✅ Browser Connection Test Successful!\n\nURL: ${data.current_url}\nTitle: ${data.page_title}\nDriver Available: ${data.driver_available}`);
+                    } else {
+                        alert(`❌ Browser Connection Test Failed!\n\nError: ${data.message}`);
+                    }
+                } catch (error) {
+                    alert(`❌ Test Failed!\n\nError: ${error.message}`);
+                }
+            }
+            
+            async function refreshScreenshot() {
+                const screenshot = document.getElementById('browser-screenshot');
+                const loading = document.getElementById('screenshot-loading');
+                const error = document.getElementById('screenshot-error');
+                const urlSpan = document.getElementById('current-url');
+                const titleSpan = document.getElementById('page-title');
+                const timestampSpan = document.getElementById('screenshot-timestamp');
+                
+                try {
+                    // Show loading state
+                    screenshot.style.display = 'none';
+                    error.style.display = 'none';
+                    loading.style.display = 'block';
+                    
+                    console.log('Fetching screenshot...');
+                    const response = await fetch('/screenshot');
+                    console.log('Screenshot response:', response.status);
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log('Screenshot data received, size:', data.screenshot.length);
+                        
+                        // Update screenshot
+                        screenshot.src = data.screenshot;
+                        screenshot.style.display = 'block';
+                        loading.style.display = 'none';
+                        
+                        // Update info
+                        urlSpan.innerText = data.current_url;
+                        titleSpan.innerText = data.page_title;
+                        timestampSpan.innerText = new Date(data.timestamp).toLocaleTimeString();
+                        
+                    } else {
+                        const errorData = await response.json();
+                        console.error('Screenshot API error:', errorData);
+                        throw new Error(errorData.message || errorData.error || 'Failed to capture screenshot');
+                    }
+                    
+                } catch (fetchError) {
+                    console.error('Screenshot error:', fetchError);
+                    
+                    // Show error state
+                    screenshot.style.display = 'none';
+                    loading.style.display = 'none';
+                    error.style.display = 'block';
+                    document.getElementById('error-message').innerText = fetchError.message;
+                    
+                    // Update info with error state
+                    urlSpan.innerText = 'Error';
+                    titleSpan.innerText = 'Unable to capture';
+                    timestampSpan.innerText = new Date().toLocaleTimeString();
+                }
+            }
+            
             async function loadLogs() {
                 try {
                     const response = await fetch('/cycles');
@@ -513,6 +666,13 @@ async def root():
                 }
             });
             
+            // Cleanup on page unload
+            window.addEventListener('beforeunload', function() {
+                if (screenshotInterval) {
+                    clearInterval(screenshotInterval);
+                }
+            });
+            
             // Initial load
             refreshStatus();
             loadLogs();
@@ -551,6 +711,17 @@ async def start_automation(request: StartAutomationRequest, background_tasks: Ba
             debug=request.debug,
             base_url=os.getenv('APP_BASE_URL')  # Use environment variable for base URL
         )
+        
+        # Verify browser is ready for screenshots
+        try:
+            if hasattr(automator, 'driver') and automator.driver:
+                # Test basic functionality
+                test_url = automator.driver.current_url or "about:blank"
+                logger.info("Browser ready for screenshots", current_url=test_url)
+            else:
+                logger.warning("Browser driver not immediately available - will be created during automation")
+        except Exception as e:
+            logger.warning("Browser test failed", error=str(e))
         
         # Start the scheduler
         if not scheduler.running:
@@ -646,6 +817,89 @@ async def get_logs():
     # This would typically read from a log file or logging service
     # For now, return recent errors
     return {"errors": automation_status["errors"][-20:]}
+
+@app.get("/screenshot")
+async def get_browser_screenshot():
+    """Get current browser screenshot"""
+    global automator
+    
+    try:
+        if not automator:
+            return JSONResponse(
+                status_code=404, 
+                content={"error": "Automator not initialized", "message": "No active automation session"}
+            )
+        
+        if not hasattr(automator, 'driver') or not automator.driver:
+            return JSONResponse(
+                status_code=404, 
+                content={"error": "Browser not available", "message": "Browser driver not active"}
+            )
+        
+        # Take screenshot and encode as base64
+        try:
+            screenshot_png = automator.driver.get_screenshot_as_png()
+            screenshot_b64 = base64.b64encode(screenshot_png).decode('utf-8')
+            logger.info("Screenshot captured successfully", size=len(screenshot_png))
+        except Exception as screenshot_error:
+            logger.error("Failed to capture screenshot", error=str(screenshot_error))
+            raise
+        
+        # Get current page info
+        try:
+            current_url = automator.driver.current_url
+            page_title = automator.driver.title
+        except:
+            current_url = "Unknown"
+            page_title = "Unknown"
+        
+        return {
+            "screenshot": f"data:image/png;base64,{screenshot_b64}",
+            "timestamp": datetime.now().isoformat(),
+            "current_url": current_url,
+            "page_title": page_title,
+            "automation_running": automation_status["running"]
+        }
+        
+            except Exception as e:
+        logger.error("Failed to capture screenshot", error=str(e))
+        return JSONResponse(
+            status_code=500, 
+            content={"error": "Screenshot failed", "message": str(e)}
+        )
+
+@app.get("/screenshot/test")
+async def test_screenshot_endpoint():
+    """Test endpoint to verify screenshot functionality"""
+    global automator
+    
+    try:
+        if not automator:
+            return {"status": "error", "message": "Automator not initialized"}
+        
+        if not hasattr(automator, 'driver') or not automator.driver:
+            return {"status": "error", "message": "Browser driver not available"}
+        
+        # Test basic driver functionality
+        try:
+            url = automator.driver.current_url
+            title = automator.driver.title
+            return {
+                "status": "success", 
+                "message": "Browser is accessible",
+                "current_url": url,
+                "page_title": title,
+                "driver_available": True
+            }
+        except Exception as driver_error:
+            return {
+                "status": "error", 
+                "message": f"Driver error: {str(driver_error)}",
+                "driver_available": False
+            }
+            
+    except Exception as e:
+        return {"status": "error", "message": f"Test failed: {str(e)}"}
 
 # Startup and shutdown events
 @app.on_event("startup")

@@ -2058,6 +2058,74 @@ class GmailOAuthAutomator:
             if has_2fa_content:
                 logger.info("🔒 2FA verification page detected!")
                 
+                # First, look for and click "Get code" or similar buttons
+                logger.info("🔍 Looking for 'Get code' or 'Send code' buttons...")
+                get_code_selectors = [
+                    # Common "Get code" button patterns
+                    "//button[contains(text(), 'Get code')]",
+                    "//button[contains(text(), 'Send code')]", 
+                    "//button[contains(text(), 'Resend code')]",
+                    "//button[contains(text(), 'Send verification code')]",
+                    "//button[contains(text(), 'Get verification code')]",
+                    "//button[contains(text(), 'Request code')]",
+                    "//button[contains(text(), 'Send SMS')]",
+                    "//button[contains(text(), 'Text me')]",
+                    "//button[contains(text(), 'Call me')]",
+                    
+                    # Case-insensitive versions
+                    "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'get code')]",
+                    "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'send code')]",
+                    "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'request code')]",
+                    
+                    # Link versions
+                    "//a[contains(text(), 'Get code')]",
+                    "//a[contains(text(), 'Send code')]",
+                    "//a[contains(text(), 'Resend code')]",
+                    
+                    # ID and class based selectors
+                    "//button[contains(@id, 'get-code')]",
+                    "//button[contains(@id, 'send-code')]",
+                    "//button[contains(@class, 'get-code')]",
+                    "//button[contains(@class, 'send-code')]",
+                    
+                    # Generic selectors for code-related buttons
+                    "//button[contains(@aria-label, 'code')]",
+                    "//button[contains(@title, 'code')]"
+                ]
+                
+                get_code_clicked = False
+                for selector in get_code_selectors:
+                    try:
+                        logger.info(f"🔍 Checking selector: {selector}")
+                        elements = self.driver.find_elements(By.XPATH, selector)
+                        
+                        for element in elements:
+                            if element.is_displayed() and element.is_enabled():
+                                button_text = element.text.strip()
+                                logger.info(f"✅ Found 'Get code' button: '{button_text}'")
+                                
+                                # Scroll into view and click
+                                self.driver.execute_script("arguments[0].scrollIntoView(true);", element)
+                                time.sleep(0.5)
+                                self.click_element_safely(element)
+                                logger.info(f"✅ Clicked 'Get code' button: '{button_text}'")
+                                
+                                # Wait for the code to be sent
+                                time.sleep(3)
+                                get_code_clicked = True
+                                break
+                    except Exception as e:
+                        logger.info(f"   Selector failed: {e}")
+                        continue
+                    
+                    if get_code_clicked:
+                        break
+                
+                if get_code_clicked:
+                    logger.info("✅ Successfully clicked 'Get code' button - code should be sent to phone")
+                else:
+                    logger.info("ℹ️ No 'Get code' button found - verification might already be in progress")
+                
                 # Look for verification codes displayed on the page
                 verification_code_patterns = [
                     # Common patterns for displayed verification codes

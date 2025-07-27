@@ -861,7 +861,7 @@ async def get_browser_screenshot():
             "automation_running": automation_status["running"]
         }
         
-            except Exception as e:
+    except Exception as e:
         logger.error("Failed to capture screenshot", error=str(e))
         return JSONResponse(
             status_code=500, 

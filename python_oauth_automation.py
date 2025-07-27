@@ -932,6 +932,82 @@ class GmailOAuthAutomator:
         except Exception as e:
             logger.warning(f"⚠️ Could not get page source length: {e}")
         
+        # PRODUCTION LOGIC: Check for pre-selected account scenario
+        logger.info("🔍 Checking for pre-selected account scenario...")
+        
+        # First, check if there are any input tags on the page
+        try:
+            all_inputs = self.driver.find_elements(By.TAG_NAME, "input")
+            visible_inputs = [inp for inp in all_inputs if inp.is_displayed()]
+            logger.info(f"📊 Found {len(all_inputs)} total input elements, {len(visible_inputs)} visible")
+            
+            # If no visible input tags, look for pre-selected account
+            if len(visible_inputs) == 0:
+                logger.info("⚡ No visible input tags found - checking for pre-selected account...")
+                
+                # Look for "midasportal1234@gmail.com" or "Midas Portal" text
+                preselected_account_selectors = [
+                    # Look for exact email text
+                    "//div[contains(text(), 'midasportal1234@gmail.com')]",
+                    "//span[contains(text(), 'midasportal1234@gmail.com')]",
+                    "//p[contains(text(), 'midasportal1234@gmail.com')]",
+                    "//*[contains(text(), 'midasportal1234@gmail.com')]",
+                    
+                    # Look for "Midas Portal" text
+                    "//div[contains(text(), 'Midas Portal')]",
+                    "//span[contains(text(), 'Midas Portal')]",
+                    "//p[contains(text(), 'Midas Portal')]",
+                    "//*[contains(text(), 'Midas Portal')]",
+                    
+                    # Look for clickable elements containing the account
+                    "//div[@role='button'][contains(text(), 'midasportal1234@gmail.com')]",
+                    "//div[@role='button'][contains(text(), 'Midas Portal')]",
+                    "//li[contains(text(), 'midasportal1234@gmail.com')]",
+                    "//li[contains(text(), 'Midas Portal')]"
+                ]
+                
+                account_found = False
+                for selector in preselected_account_selectors:
+                    try:
+                        logger.info(f"🔍 Checking for pre-selected account: {selector}")
+                        elements = self.driver.find_elements(By.XPATH, selector)
+                        
+                        for element in elements:
+                            if element.is_displayed():
+                                element_text = element.text.strip()
+                                logger.info(f"✅ Found pre-selected account element: '{element_text}'")
+                                
+                                # Try to click the element
+                                try:
+                                    self.driver.execute_script("arguments[0].scrollIntoView(true);", element)
+                                    time.sleep(0.5)
+                                    self.click_element_safely(element)
+                                    logger.info("✅ Clicked pre-selected account - skipping email/password input")
+                                    time.sleep(3)  # Wait for page to load
+                                    account_found = True
+                                    break
+                                except Exception as click_error:
+                                    logger.warning(f"⚠️ Failed to click pre-selected account: {click_error}")
+                                    continue
+                        
+                        if account_found:
+                            break
+                            
+                    except Exception as e:
+                        logger.info(f"   Selector failed: {e}")
+                        continue
+                
+                if account_found:
+                    logger.info("🚀 Pre-selected account scenario detected and handled - proceeding to consent screen")
+                    return True
+                else:
+                    logger.info("⚠️ No pre-selected account found despite no input fields")
+            else:
+                logger.info(f"📝 Input fields detected ({len(visible_inputs)} visible) - proceeding with normal flow")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Error during pre-selected account check: {e}")
+        
         # Check for direct email input FIRST (most common case)
         logger.info("🔍 Checking for direct email input...")
         email_selectors = [

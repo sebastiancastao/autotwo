@@ -107,6 +107,22 @@ class EternalGmailAutomator(GmailOAuthAutomator):
         """Attempt OAuth with retries"""
         logger.info(f"🔐 OAuth attempt {self.oauth_retry_count + 1}")
         
+        # Ensure browser driver is set up before OAuth
+        if not hasattr(self, 'driver') or not self.driver:
+            logger.info("🚀 Setting up browser driver for OAuth...")
+            try:
+                browser_setup_success = self.setup_driver()
+                if not browser_setup_success or not self.driver:
+                    logger.error("❌ Failed to set up browser driver for OAuth")
+                    self.oauth_retry_count += 1
+                    return False
+                else:
+                    logger.info("✅ Browser driver ready for OAuth")
+            except Exception as setup_error:
+                logger.error(f"💥 Browser setup error for OAuth: {setup_error}")
+                self.oauth_retry_count += 1
+                return False
+        
         try:
             success = self.monitor_oauth_process(keep_browser_for_workflow=True)
             if success:

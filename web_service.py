@@ -160,13 +160,26 @@ def init_automator():
         base_url=os.getenv('APP_BASE_URL')  # Use environment variable for base URL
     )
     
-    # Log browser initialization info
-    if hasattr(automator, 'driver') and automator.driver:
-        logger.info("Browser driver initialized successfully for screenshots")
-    else:
-        logger.warning("Browser driver not available - screenshots may not work")
+    # Initialize browser driver immediately for screenshots
+    logger.info("🚀 Initializing browser driver for screenshot support...")
+    try:
+        browser_setup_success = automator.setup_driver()
+        if browser_setup_success and automator.driver:
+            logger.info("✅ Browser driver initialized successfully for screenshots")
+            # Test basic functionality
+            try:
+                test_url = automator.driver.current_url or "about:blank"
+                logger.info(f"🌐 Browser ready - Initial URL: {test_url}")
+            except Exception as test_error:
+                logger.warning(f"⚠️ Browser test failed: {test_error}")
+        else:
+            logger.error("❌ Browser driver initialization failed")
+            return None
+    except Exception as setup_error:
+        logger.error(f"💥 Browser setup error: {setup_error}")
+        return None
     
-    logger.info("Gmail automator initialized", email=gmail_email)
+    logger.info("✅ Gmail automator fully initialized with browser support", email=gmail_email)
     return automator
 
 # Background automation task
@@ -183,14 +196,32 @@ async def run_automation_cycle():
     global automation_status, automator
     
     if not automator:
-        logger.error("Automator not initialized")
+        logger.error("❌ Automator not initialized")
         return
+    
+    # Ensure browser driver is available
+    if not hasattr(automator, 'driver') or not automator.driver:
+        logger.warning("🔧 Browser driver not available, attempting to initialize...")
+        try:
+            browser_setup_success = automator.setup_driver()
+            if not browser_setup_success or not automator.driver:
+                logger.error("❌ Failed to initialize browser driver for automation cycle")
+                error_msg = f"Browser initialization failed in cycle {automation_status['cycle_count']}"
+                automation_status["errors"].append(error_msg)
+                return
+            else:
+                logger.info("✅ Browser driver initialized successfully for automation cycle")
+        except Exception as browser_error:
+            logger.error(f"💥 Browser setup error in automation cycle: {browser_error}")
+            error_msg = f"Browser setup error in cycle {automation_status['cycle_count']}: {str(browser_error)}"
+            automation_status["errors"].append(error_msg)
+            return
     
     try:
         automation_status["cycle_count"] += 1
         cycle_start = datetime.now()
         
-        logger.info("Starting automation cycle", cycle=automation_status["cycle_count"])
+        logger.info("🚀 Starting automation cycle", cycle=automation_status["cycle_count"])
         
         # Run OAuth if not completed
         if not automation_status["oauth_completed"]:
@@ -730,12 +761,31 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint for Render"""
-    return {
+    global automator
+    
+    health_status = {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "service": "gmail-oauth-automation",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "browser_status": "unknown"
     }
+    
+    # Check browser status
+    if automator and hasattr(automator, 'driver') and automator.driver:
+        try:
+            # Quick browser health check
+            current_url = automator.driver.current_url
+            health_status["browser_status"] = "active"
+            health_status["browser_url"] = current_url
+        except Exception as e:
+            health_status["browser_status"] = f"error: {str(e)}"
+    elif automator:
+        health_status["browser_status"] = "automator_exists_no_driver"
+    else:
+        health_status["browser_status"] = "no_automator"
+    
+    return health_status
 
 @app.get("/status", response_model=AutomationStatus)
 async def get_status():
@@ -757,16 +807,19 @@ async def start_automation(request: StartAutomationRequest, background_tasks: Ba
             base_url=os.getenv('APP_BASE_URL')  # Use environment variable for base URL
         )
         
-        # Verify browser is ready for screenshots
+        # Initialize browser driver immediately
+        logger.info("🚀 Initializing browser driver for manual start...")
         try:
-            if hasattr(automator, 'driver') and automator.driver:
-                # Test basic functionality
+            browser_setup_success = automator.setup_driver()
+            if browser_setup_success and automator.driver:
                 test_url = automator.driver.current_url or "about:blank"
-                logger.info("Browser ready for screenshots", current_url=test_url)
+                logger.info("✅ Browser ready for screenshots", current_url=test_url)
             else:
-                logger.warning("Browser driver not immediately available - will be created during automation")
+                logger.error("❌ Browser driver initialization failed")
+                raise HTTPException(status_code=500, detail="Failed to initialize browser driver")
         except Exception as e:
-            logger.warning("Browser test failed", error=str(e))
+            logger.error("💥 Browser setup error", error=str(e))
+            raise HTTPException(status_code=500, detail=f"Browser setup failed: {str(e)}")
         
         # Start the scheduler
         if not scheduler.running:
@@ -1063,9 +1116,12 @@ async def startup_event():
     if gmail_password:
         logger.info("Auto-starting Gmail workflow automation with environment credentials")
         logger.info("This will run the complete workflow: OAuth → Gmail Processing → 20min cycles")
-        automator = init_automator()
+        # Initialize automator and set global reference
+        new_automator = init_automator()
         
-        if automator:
+        if new_automator:
+            # Update global automator reference
+            automator = new_automator
             # Start scheduler immediately (will reschedule itself based on processing time)
             scheduler.add_job(
                 run_automation_cycle,

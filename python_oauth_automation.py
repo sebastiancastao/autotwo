@@ -2149,56 +2149,70 @@ class GmailOAuthAutomator:
             logger.info(f"📄 Page title: {page_title}")
             
             # Check for 2FA-related keywords in page content (more specific to avoid false positives)
-            # First check for password-related content to exclude password pages
-            password_keywords = [
-                "password", "passwd", "enter your password", "current password", 
-                "new password", "confirm password", "password field", "sign in",
-                "login", "log in", "enter password", "type your password"
+            
+            # URL-based 2FA detection (most reliable)
+            twofa_url_patterns = [
+                "challenge", "verify", "mfa", "2fa", "factor", "auth/sl/challenge", 
+                "ipp/consent", "signin/challenge"
             ]
             
-            has_password_content = any(keyword in page_source for keyword in password_keywords)
-            
-            # More specific 2FA keywords that are less likely to appear on password pages
-            specific_twofa_keywords = [
+            # Strong 2FA indicators in page content
+            strong_twofa_keywords = [
                 "verification code", "enter the code", "6-digit code", "8-digit code",
                 "authenticator app", "google authenticator", "sms code", "text message code",
                 "phone verification", "mobile verification", "two-factor", "2-factor", "2fa",
                 "we sent a code", "code sent to", "check your phone", "enter code from",
-                "verification method", "choose how to verify", "verify it's you"
+                "verification method", "choose how to verify", "verify it's you",
+                "help keep your account safe", "make sure it's really you", "send code",
+                "get verification code", "receive code"
             ]
             
-            # URL-based 2FA detection (more reliable)
-            twofa_url_patterns = [
-                "challenge", "verify", "mfa", "2fa", "factor", "auth/sl/challenge"
+            # Check for specific 2FA page titles and content
+            twofa_title_patterns = [
+                "verify it's you", "2-step verification", "verify your identity",
+                "choose how to verify", "get verification code", "enter verification code"
             ]
             
-            # Exclude common OAuth password/login URLs
-            oauth_login_patterns = [
-                "signin", "login", "accounts.google.com/signin", 
-                "accounts.google.com/v3/signin", "password", "identifier"
-            ]
-            
-            is_oauth_login_page = any(pattern in current_url.lower() for pattern in oauth_login_patterns)
             has_twofa_url = any(pattern in current_url.lower() for pattern in twofa_url_patterns)
-            has_specific_twofa_content = any(keyword in page_source for keyword in specific_twofa_keywords)
+            has_strong_twofa_content = any(keyword in page_source for keyword in strong_twofa_keywords)
+            has_twofa_title = any(pattern in page_title.lower() for pattern in twofa_title_patterns)
             
-            # Only consider it 2FA if:
-            # 1. It's not a password page AND
-            # 2. It's not a standard OAuth login page AND
-            # 3. (URL suggests 2FA OR has specific 2FA content)
-            has_2fa_content = (not has_password_content and 
-                             not is_oauth_login_page and 
-                             (has_twofa_url or has_specific_twofa_content))
+            # More specific password detection - only for actual password entry pages
+            specific_password_keywords = [
+                "enter your password", "current password", "password field",
+                "type your password", "password is required", "incorrect password",
+                "wrong password", "forgotten password", "reset password"
+            ]
             
-            if has_2fa_content:
+            # Check for actual password input fields (most reliable)
+            has_password_input = False
+            try:
+                password_inputs = self.driver.find_elements(By.XPATH, "//input[@type='password']")
+                has_password_input = len(password_inputs) > 0
+            except:
+                pass
+            
+            has_specific_password_content = any(keyword in page_source for keyword in specific_password_keywords)
+            
+            # 2FA takes priority over password detection
+            # Check for 2FA first with multiple indicators
+            is_2fa_page = (has_twofa_url or has_strong_twofa_content or has_twofa_title)
+            
+            # Only consider it a password page if:
+            # 1. It's NOT a 2FA page AND
+            # 2. Has actual password inputs OR specific password content
+            is_password_page = (not is_2fa_page and (has_password_input or has_specific_password_content))
+            
+            # Exclude common OAuth login URLs that aren't actually 2FA
+            oauth_login_patterns = [
+                "accounts.google.com/signin/identifier", 
+                "accounts.google.com/signin/v2/identifier"
+            ]
+            is_oauth_login_page = any(pattern in current_url.lower() for pattern in oauth_login_patterns)
+            
+            if is_2fa_page:
                 logger.info("🔒 2FA verification page detected!")
-                logger.info(f"🔍 Detection reasons - URL pattern: {has_twofa_url}, Specific content: {has_specific_twofa_content}")
-            elif has_password_content:
-                logger.info("🔑 Password page detected - skipping 2FA handling")
-                return False
-            elif is_oauth_login_page:
-                logger.info("🔐 OAuth login page detected - skipping 2FA handling")
-                return False
+                logger.info(f"🔍 Detection reasons - URL: {has_twofa_url}, Content: {has_strong_twofa_content}, Title: {has_twofa_title}")
                 
                 # First, look for and click "Get code" or similar buttons
                 logger.info("🔍 Looking for 'Get code' or 'Send code' buttons...")
@@ -2479,10 +2493,19 @@ class GmailOAuthAutomator:
                         logger.warning("⚠️ No verification code received")
                 
                 return True  # 2FA page was detected and handled
+                
+            elif is_password_page:
+                logger.info("🔑 Password page detected - skipping 2FA handling")
+                logger.info(f"🔍 Password indicators - Input field: {has_password_input}, Content: {has_specific_password_content}")
+                return False
+                
+            elif is_oauth_login_page:
+                logger.info("🔐 OAuth login page detected - skipping 2FA handling")
+                return False
             
             else:
-                logger.info("ℹ️ No 2FA verification required - continuing...")
-                return False  # No 2FA needed
+                logger.info("ℹ️ No 2FA verification required")
+                return False
                 
         except Exception as e:
             logger.warning(f"⚠️ Error in 2FA verification handling: {e}")

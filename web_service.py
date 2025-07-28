@@ -419,6 +419,7 @@ async def root():
                 <li><a href="/cycles">GET /cycles</a> - Get cycle history</li>
                 <li><a href="/screenshot">GET /screenshot</a> - Get browser screenshot</li>
                 <li><a href="/screenshot/test">GET /screenshot/test</a> - Test browser connection</li>
+                <li><a href="/debug/browser">GET /debug/browser</a> - Debug browser status</li>
                 <li><a href="/health">GET /health</a> - Health check</li>
                 <li><a href="/docs">GET /docs</a> - API Documentation</li>
             </ul>
@@ -868,48 +869,108 @@ async def get_browser_screenshot():
     global automator
     
     try:
+        logger.info("📸 Screenshot request received")
+        
         if not automator:
+            logger.warning("No automator available for screenshot")
             return JSONResponse(
                 status_code=404, 
-                content={"error": "Automator not initialized", "message": "No active automation session"}
+                content={
+                    "error": "Automator not initialized", 
+                    "message": "No active automation session",
+                    "debug_info": {
+                        "automation_running": automation_status.get("running", False),
+                        "oauth_completed": automation_status.get("oauth_completed", False)
+                    }
+                }
             )
         
         if not hasattr(automator, 'driver') or not automator.driver:
+            logger.warning("Browser driver not available for screenshot")
             return JSONResponse(
                 status_code=404, 
-                content={"error": "Browser not available", "message": "Browser driver not active"}
+                content={
+                    "error": "Browser not available", 
+                    "message": "Browser driver not active",
+                    "debug_info": {
+                        "automator_exists": automator is not None,
+                        "driver_attribute_exists": hasattr(automator, 'driver'),
+                        "environment": os.getenv('ENVIRONMENT', 'unknown'),
+                        "display": os.getenv('DISPLAY', 'not set')
+                    }
+                }
+            )
+        
+        # Enhanced browser status check
+        try:
+            current_url = automator.driver.current_url
+            page_title = automator.driver.title
+            logger.info(f"📍 Browser status - URL: {current_url}, Title: {page_title}")
+        except Exception as status_error:
+            logger.error(f"❌ Browser status check failed: {status_error}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "Browser status check failed",
+                    "message": str(status_error),
+                    "debug_info": {
+                        "driver_exists": automator.driver is not None,
+                        "status_error": str(status_error)
+                    }
+                }
             )
         
         # Take screenshot and encode as base64
         try:
+            logger.info("📷 Attempting to capture screenshot...")
             screenshot_png = automator.driver.get_screenshot_as_png()
             screenshot_b64 = base64.b64encode(screenshot_png).decode('utf-8')
-            logger.info("Screenshot captured successfully", size=len(screenshot_png))
+            logger.info(f"✅ Screenshot captured successfully - Size: {len(screenshot_png)} bytes")
         except Exception as screenshot_error:
-            logger.error("Failed to capture screenshot", error=str(screenshot_error))
-            raise
-        
-        # Get current page info
-        try:
-            current_url = automator.driver.current_url
-            page_title = automator.driver.title
-        except:
-            current_url = "Unknown"
-            page_title = "Unknown"
+            logger.error(f"❌ Screenshot capture failed: {screenshot_error}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "Screenshot capture failed",
+                    "message": str(screenshot_error),
+                    "debug_info": {
+                        "screenshot_error": str(screenshot_error),
+                        "current_url": current_url,
+                        "page_title": page_title,
+                        "display": os.getenv('DISPLAY', 'not set'),
+                        "environment": os.getenv('ENVIRONMENT', 'unknown')
+                    }
+                }
+            )
         
         return {
             "screenshot": f"data:image/png;base64,{screenshot_b64}",
             "timestamp": datetime.now().isoformat(),
             "current_url": current_url,
             "page_title": page_title,
-            "automation_running": automation_status["running"]
+            "automation_running": automation_status["running"],
+            "debug_info": {
+                "screenshot_size": len(screenshot_png),
+                "display": os.getenv('DISPLAY', 'not set'),
+                "environment": os.getenv('ENVIRONMENT', 'unknown'),
+                "browser_headless": os.getenv('BROWSER_HEADLESS', 'not set')
+            }
         }
         
     except Exception as e:
-        logger.error("Failed to capture screenshot", error=str(e))
+        logger.error(f"💥 Screenshot endpoint error: {e}")
         return JSONResponse(
             status_code=500, 
-            content={"error": "Screenshot failed", "message": str(e)}
+            content={
+                "error": "Screenshot endpoint failed", 
+                "message": str(e),
+                "debug_info": {
+                    "error_type": type(e).__name__,
+                    "automator_exists": automator is not None,
+                    "display": os.getenv('DISPLAY', 'not set'),
+                    "environment": os.getenv('ENVIRONMENT', 'unknown')
+                }
+            }
         )
 
 @app.get("/screenshot/test")
@@ -944,6 +1005,49 @@ async def test_screenshot_endpoint():
             
     except Exception as e:
         return {"status": "error", "message": f"Test failed: {str(e)}"}
+
+@app.get("/debug/browser")
+async def debug_browser_status():
+    """Debug endpoint to check browser status"""
+    global automator
+    
+    debug_info = {
+        "timestamp": datetime.now().isoformat(),
+        "environment": {
+            "ENVIRONMENT": os.getenv('ENVIRONMENT', 'not set'),
+            "DISPLAY": os.getenv('DISPLAY', 'not set'),
+            "BROWSER_HEADLESS": os.getenv('BROWSER_HEADLESS', 'not set'),
+            "CHROME_BIN": os.getenv('CHROME_BIN', 'not set'),
+            "CHROMEDRIVER_DIR": os.getenv('CHROMEDRIVER_DIR', 'not set'),
+        },
+        "docker": {
+            "is_docker": os.path.exists('/.dockerenv'),
+            "docker_env_file": os.path.exists('/.dockerenv')
+        },
+        "automation_status": automation_status,
+        "automator": {
+            "exists": automator is not None,
+            "has_driver_attr": hasattr(automator, 'driver') if automator else False,
+            "driver_exists": automator.driver is not None if automator and hasattr(automator, 'driver') else False
+        }
+    }
+    
+    if automator and hasattr(automator, 'driver') and automator.driver:
+        try:
+            debug_info["browser"] = {
+                "current_url": automator.driver.current_url,
+                "page_title": automator.driver.title,
+                "window_size": automator.driver.get_window_size(),
+                "capabilities": automator.driver.capabilities.get('browserName', 'unknown')
+            }
+        except Exception as e:
+            debug_info["browser"] = {
+                "error": f"Failed to get browser info: {e}"
+            }
+    else:
+        debug_info["browser"] = "No active browser driver"
+    
+    return debug_info
 
 # Startup and shutdown events
 @app.on_event("startup")

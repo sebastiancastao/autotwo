@@ -22,7 +22,12 @@ RUN apt-get update && apt-get install -y \
     unzip \
     curl \
     xvfb \
+    x11-utils \
+    x11-xserver-utils \
+    xauth \
     fonts-liberation \
+    fonts-dejavu-core \
+    fontconfig \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -34,9 +39,12 @@ RUN apt-get update && apt-get install -y \
     libxcomposite1 \
     libxdamage1 \
     libxrandr2 \
+    libxss1 \
+    libxtst6 \
     xdg-utils \
     libu2f-udev \
     libvulkan1 \
+    dbus-x11 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Google Chrome

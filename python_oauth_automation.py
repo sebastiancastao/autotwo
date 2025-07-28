@@ -142,11 +142,44 @@ class GmailOAuthAutomator:
     def setup_driver(self):
         """Setup Chrome WebDriver with appropriate options"""
         logger.info("🚀 Setting up Chrome WebDriver...")
+        logger.info(f"🖥️ Headless mode: {self.headless}")
+        logger.info(f"🎮 Display environment: {os.getenv('DISPLAY', 'Not set')}")
         
         chrome_options = Options()
         
+        # Production environment detection
+        is_production = os.getenv('ENVIRONMENT', '').lower() == 'production'
+        is_docker = os.path.exists('/.dockerenv')
+        
+        logger.info(f"🏭 Production environment: {is_production}")
+        logger.info(f"🐳 Docker environment: {is_docker}")
+        
         if self.headless:
             chrome_options.add_argument("--headless")
+            logger.info("👻 Running in headless mode")
+        else:
+            logger.info("🖼️ Running with visible browser")
+        
+        # Enhanced Docker/Production configuration
+        if is_production or is_docker:
+            logger.info("🐳 Applying Docker/Production-specific Chrome options...")
+            
+            # Virtual display configuration
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--remote-debugging-port=9222")
+            chrome_options.add_argument("--disable-software-rasterizer")
+            
+            # For non-headless mode in Docker, ensure proper display
+            if not self.headless:
+                display = os.getenv('DISPLAY', ':99')
+                chrome_options.add_argument(f"--display={display}")
+                logger.info(f"🖥️ Setting Chrome display to: {display}")
+        else:
+            # Standard options for local development
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
         
         # Important: Allow popups and disable web security for OAuth
         chrome_options.add_argument("--disable-popup-blocking")
@@ -154,20 +187,25 @@ class GmailOAuthAutomator:
         chrome_options.add_argument("--allow-running-insecure-content")
         chrome_options.add_argument("--disable-features=VizDisplayCompositor")
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
         
         # User agent to avoid detection
         chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
         # Window size and positioning
         chrome_options.add_argument("--window-size=1200,800")
-        chrome_options.add_argument("--window-position=100,100")
+        if not (is_production or is_docker):
+            chrome_options.add_argument("--window-position=100,100")
         
         # Improve stability
         chrome_options.add_argument("--disable-extensions")
         chrome_options.add_argument("--disable-plugins")
         chrome_options.add_argument("--disable-images")  # Faster loading
+        
+        # Additional production stability options
+        if is_production or is_docker:
+            chrome_options.add_argument("--disable-background-timer-throttling")
+            chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+            chrome_options.add_argument("--disable-renderer-backgrounding")
         
         # Try the fastest method first - system ChromeDriver
         logger.info("🔧 Quick Method: Trying system ChromeDriver first...")
@@ -175,7 +213,11 @@ class GmailOAuthAutomator:
             self.driver = webdriver.Chrome(options=chrome_options)
             self.driver.set_page_load_timeout(30)
             self.driver.implicitly_wait(10)
-            logger.info("✅ Chrome WebDriver initialized with system ChromeDriver (fastest method)")
+            
+            # Test browser functionality
+            test_url = self.driver.current_url or "about:blank"
+            logger.info(f"✅ Chrome WebDriver initialized successfully (system)")
+            logger.info(f"🌐 Initial browser URL: {test_url}")
             return True
         except Exception as e:
             logger.warning(f"⚠️ System ChromeDriver failed: {e}")

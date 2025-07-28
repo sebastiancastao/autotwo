@@ -210,17 +210,78 @@ class GmailOAuthAutomator:
         # Try the fastest method first - system ChromeDriver
         logger.info("🔧 Quick Method: Trying system ChromeDriver first...")
         try:
-            self.driver = webdriver.Chrome(options=chrome_options)
+            # Add timeout protection for browser initialization
+            import signal
+            import threading
+            
+            def timeout_handler(signum, frame):
+                raise TimeoutError("Browser initialization timeout")
+            
+            # Browser initialization with timeout (only on Unix systems)
+            browser_init_success = False
+            
+            if hasattr(signal, 'SIGALRM'):  # Unix systems
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(30)  # 30 second timeout
+                
+                try:
+                    self.driver = webdriver.Chrome(options=chrome_options)
+                    browser_init_success = True
+                finally:
+                    signal.alarm(0)  # Cancel timeout
+            else:
+                # Windows or systems without SIGALRM - use threading timeout
+                def init_browser():
+                    nonlocal browser_init_success
+                    try:
+                        self.driver = webdriver.Chrome(options=chrome_options)
+                        browser_init_success = True
+                    except Exception as e:
+                        logger.error(f"Browser init thread error: {e}")
+                
+                init_thread = threading.Thread(target=init_browser)
+                init_thread.daemon = True
+                init_thread.start()
+                init_thread.join(timeout=30)  # 30 second timeout
+                
+                if init_thread.is_alive():
+                    logger.error("Browser initialization timed out")
+                    raise TimeoutError("Browser initialization timeout")
+            
+            if not browser_init_success or not self.driver:
+                raise Exception("Browser initialization failed")
+            
+            # Configure timeouts
             self.driver.set_page_load_timeout(30)
             self.driver.implicitly_wait(10)
             
-            # Test browser functionality
-            test_url = self.driver.current_url or "about:blank"
-            logger.info(f"✅ Chrome WebDriver initialized successfully (system)")
-            logger.info(f"🌐 Initial browser URL: {test_url}")
+            # Test browser functionality with error handling
+            try:
+                test_url = self.driver.current_url or "about:blank"
+                logger.info(f"✅ Chrome WebDriver initialized successfully (system)")
+                logger.info(f"🌐 Initial browser URL: {test_url}")
+            except Exception as test_error:
+                logger.warning(f"Browser test failed but continuing: {test_error}")
+            
             return True
+            
+        except TimeoutError:
+            logger.warning("⏰ Browser initialization timed out")
+            if hasattr(self, 'driver') and self.driver:
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+                self.driver = None
         except Exception as e:
             logger.warning(f"⚠️ System ChromeDriver failed: {e}")
+            if hasattr(self, 'driver') and self.driver:
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+                self.driver = None
+            
             if self.skip_webdriver_manager:
                 logger.info("🔧 Skipping webdriver-manager as requested...")
             else:
@@ -2087,19 +2148,81 @@ class GmailOAuthAutomator:
             logger.info(f"📍 Current URL: {current_url}")
             logger.info(f"📄 Page title: {page_title}")
             
-            # Check for 2FA-related keywords in page content
-            twofa_keywords = [
-                "verify", "verification", "code", "phone", "mobile", "sms", "text", 
-                "authenticator", "security", "factor", "confirm", "confirmation",
-                "enter the code", "verification code", "phone number", "mobile number",
-                "we sent", "sent to", "check your phone", "text message", "sms code"
+            # Check for 2FA-related keywords in page content (more specific to avoid false positives)
+            # First check for password-related content to exclude password pages
+            password_keywords = [
+                "password", "passwd", "enter your password", "current password", 
+                "new password", "confirm password", "password field", "sign in",
+                "login", "log in", "enter password", "type your password"
             ]
             
-            has_2fa_content = any(keyword in page_source for keyword in twofa_keywords)
+            has_password_content = any(keyword in page_source for keyword in password_keywords)
+            
+            # Highly specific 2FA keywords that should only appear on actual 2FA pages
+            specific_twofa_keywords = [
+                "verification code", "enter the code", "6-digit code", "8-digit code", "4-digit code",
+                "authenticator app", "google authenticator", "sms code", "text message code",
+                "two-factor", "2-factor", "2fa", "multi-factor", "enter code from phone",
+                "we sent a code", "code sent to your phone", "text message with code",
+                "enter the verification code", "check your phone for a code",
+                "enter 6-digit verification code", "enter your verification code"
+            ]
+            
+            # URL-based 2FA detection (more reliable)
+            twofa_url_patterns = [
+                "challenge", "verify", "mfa", "2fa", "factor", "auth/sl/challenge"
+            ]
+            
+            # Exclude common OAuth flow URLs (login, consent, account selection, etc.)
+            oauth_flow_patterns = [
+                "signin", "login", "accounts.google.com/signin", 
+                "accounts.google.com/v3/signin", "password", "identifier",
+                "consent", "oauth", "permissions", "scope", "authorize",
+                "accounts.google.com/oauth", "accounts.google.com/b/0/oauth"
+            ]
+            
+            # Detect consent/permission screens
+            consent_keywords = [
+                "wants to access", "requesting permission", "allow access",
+                "grant permission", "oauth consent", "permissions requested",
+                "this app wants to", "give access to", "allow this app",
+                "continue to", "has requested access", "scope", "scopes"
+            ]
+            
+            is_oauth_flow_page = any(pattern in current_url.lower() for pattern in oauth_flow_patterns)
+            has_consent_content = any(keyword in page_source for keyword in consent_keywords)
+            has_twofa_url = any(pattern in current_url.lower() for pattern in twofa_url_patterns)
+            has_specific_twofa_content = any(keyword in page_source for keyword in specific_twofa_keywords)
+            
+            # Only consider it 2FA if:
+            # 1. It's not a password page AND
+            # 2. It's not a standard OAuth flow page AND  
+            # 3. It's not a consent/permission screen AND
+            # 4. (URL suggests 2FA OR has specific 2FA content) AND
+            # 5. Has actual 2FA-specific content (not just URL)
+            has_2fa_content = (not has_password_content and 
+                             not is_oauth_flow_page and 
+                             not has_consent_content and
+                             has_twofa_url and
+                             has_specific_twofa_content)
             
             if has_2fa_content:
                 logger.info("🔒 2FA verification page detected!")
-                
+                logger.info(f"🔍 2FA Detection reasons - URL: {has_twofa_url}, Content: {has_specific_twofa_content}")
+            elif has_password_content:
+                logger.info("🔑 Password page detected - skipping 2FA handling")
+                return False
+            elif is_oauth_flow_page:
+                logger.info("🔐 OAuth flow page detected - skipping 2FA handling")
+                return False  
+            elif has_consent_content:
+                logger.info("📝 OAuth consent/permission screen detected - skipping 2FA handling")
+                return False
+            else:
+                logger.info("ℹ️ Normal page detected - no 2FA verification needed")
+                return False
+            
+            if has_2fa_content:
                 # First, look for and click "Get code" or similar buttons
                 logger.info("🔍 Looking for 'Get code' or 'Send code' buttons...")
                 get_code_selectors = [

@@ -27,6 +27,8 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field
 import uvicorn
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -73,6 +75,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add global exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler to ensure JSON responses"""
+    logger.error(f"💥 Unhandled exception: {exc}")
+    logger.error(f"Request path: {request.url.path}")
+    logger.error(f"Exception type: {type(exc).__name__}")
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal server error",
+            "message": str(exc),
+            "path": str(request.url.path),
+            "type": type(exc).__name__,
+            "timestamp": datetime.now().isoformat()
+        }
+    )
 
 # Global variables
 scheduler = AsyncIOScheduler()
@@ -225,7 +246,7 @@ async def run_automation_cycle():
         
         # Run OAuth if not completed
         if not automation_status["oauth_completed"]:
-            logger.info("Attempting OAuth authentication")
+            logger.info("🔐 Attempting OAuth authentication")
             oauth_success = automator.attempt_oauth_with_retries()
             automation_status["oauth_completed"] = oauth_success
             
@@ -233,6 +254,12 @@ async def run_automation_cycle():
                 error_msg = f"OAuth failed in cycle {automation_status['cycle_count']}"
                 automation_status["errors"].append(error_msg)
                 logger.error(error_msg)
+                
+                # Check if 2FA verification is needed
+                if automation_status.get("needs_verification", False):
+                    logger.info("⏸️ OAuth paused for 2FA verification - waiting for user input")
+                    return  # Don't treat as failure if waiting for 2FA
+                
                 return
             else:
                 logger.info("✅ OAuth completed successfully")
@@ -451,6 +478,7 @@ async def root():
                 <li><a href="/screenshot">GET /screenshot</a> - Get browser screenshot</li>
                 <li><a href="/screenshot/test">GET /screenshot/test</a> - Test browser connection</li>
                 <li><a href="/debug/browser">GET /debug/browser</a> - Debug browser status</li>
+                <li><a href="/debug/startup">GET /debug/startup</a> - Server health check</li>
                 <li><a href="/health">GET /health</a> - Health check</li>
                 <li><a href="/docs">GET /docs</a> - API Documentation</li>
             </ul>
@@ -654,27 +682,69 @@ async def root():
                     
                     console.log('Fetching screenshot...');
                     const response = await fetch('/screenshot');
-                    console.log('Screenshot response:', response.status);
+                    console.log('Screenshot response status:', response.status);
                     
-                    if (response.ok) {
-                        const data = await response.json();
-                        console.log('Screenshot data received, size:', data.screenshot.length);
+                    // Check if response is OK
+                    if (!response.ok) {
+                        console.error('Screenshot response not OK:', response.status, response.statusText);
                         
-                        // Update screenshot
-                        screenshot.src = data.screenshot;
-                        screenshot.style.display = 'block';
-                        loading.style.display = 'none';
+                        // Try to get error details
+                        let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                        try {
+                            const errorText = await response.text();
+                            console.log('Error response text:', errorText);
+                            
+                            // Try to parse as JSON first
+                            try {
+                                const errorData = JSON.parse(errorText);
+                                errorMessage = errorData.message || errorData.error || errorMessage;
+                                console.log('Error data parsed:', errorData);
+                            } catch (jsonError) {
+                                // If not JSON, use the raw text (probably HTML error page)
+                                console.log('Response is not JSON, using raw text');
+                                if (errorText.includes('<html') || errorText.includes('<!DOCTYPE')) {
+                                    errorMessage = `Server error (HTML response) - Status: ${response.status}`;
+                                } else {
+                                    errorMessage = errorText.substring(0, 200); // Limit length
+                                }
+                            }
+                        } catch (textError) {
+                            console.error('Could not read error response:', textError);
+                        }
                         
-                        // Update info
-                        urlSpan.innerText = data.current_url;
-                        titleSpan.innerText = data.page_title;
-                        timestampSpan.innerText = new Date(data.timestamp).toLocaleTimeString();
-                        
-                    } else {
-                        const errorData = await response.json();
-                        console.error('Screenshot API error:', errorData);
-                        throw new Error(errorData.message || errorData.error || 'Failed to capture screenshot');
+                        throw new Error(errorMessage);
                     }
+                    
+                    // Try to parse JSON response
+                    let data;
+                    try {
+                        const responseText = await response.text();
+                        console.log('Screenshot response text length:', responseText.length);
+                        data = JSON.parse(responseText);
+                        console.log('Screenshot data parsed successfully');
+                    } catch (parseError) {
+                        console.error('JSON parse error:', parseError);
+                        console.log('Response text (first 500 chars):', (await response.text()).substring(0, 500));
+                        throw new Error(`Invalid JSON response: ${parseError.message}`);
+                    }
+                    
+                    // Validate response data
+                    if (!data.screenshot) {
+                        console.error('No screenshot data in response:', data);
+                        throw new Error('No screenshot data received');
+                    }
+                    
+                    // Update screenshot
+                    screenshot.src = data.screenshot;
+                    screenshot.style.display = 'block';
+                    loading.style.display = 'none';
+                    
+                    // Update info
+                    urlSpan.innerText = data.current_url || 'Unknown';
+                    titleSpan.innerText = data.page_title || 'Unknown';
+                    timestampSpan.innerText = new Date(data.timestamp).toLocaleTimeString();
+                    
+                    console.log('Screenshot updated successfully');
                     
                 } catch (fetchError) {
                     console.error('Screenshot error:', fetchError);
@@ -683,12 +753,33 @@ async def root():
                     screenshot.style.display = 'none';
                     loading.style.display = 'none';
                     error.style.display = 'block';
-                    document.getElementById('error-message').innerText = fetchError.message;
+                    
+                    // Enhanced error message
+                    let errorMsg = fetchError.message;
+                    if (fetchError.message.includes('TypeError: NetworkError')) {
+                        errorMsg = 'Network error - server may be restarting or overloaded';
+                    } else if (fetchError.message.includes('502')) {
+                        errorMsg = 'Server error (502) - browser initialization may have failed';
+                    } else if (fetchError.message.includes('503')) {
+                        errorMsg = 'Service unavailable (503) - browser driver not ready';
+                    }
+                    
+                    document.getElementById('error-message').innerText = errorMsg;
                     
                     // Update info with error state
                     urlSpan.innerText = 'Error';
-                    titleSpan.innerText = 'Unable to capture';
+                    titleSpan.innerText = 'Screenshot failed';
                     timestampSpan.innerText = new Date().toLocaleTimeString();
+                    
+                    // Add retry suggestion for certain errors
+                    if (fetchError.message.includes('502') || fetchError.message.includes('503')) {
+                        setTimeout(() => {
+                            console.log('Auto-retrying screenshot after error...');
+                            if (browserViewVisible) {
+                                refreshScreenshot();
+                            }
+                        }, 10000); // Retry after 10 seconds
+                    }
                 }
             }
             
@@ -918,12 +1009,13 @@ async def get_logs():
 
 @app.get("/screenshot")
 async def get_browser_screenshot():
-    """Get current browser screenshot"""
+    """Get current browser screenshot with enhanced error handling"""
     global automator
     
     try:
         logger.info("📸 Screenshot request received")
         
+        # Basic validation
         if not automator:
             logger.warning("No automator available for screenshot")
             return JSONResponse(
@@ -933,95 +1025,165 @@ async def get_browser_screenshot():
                     "message": "No active automation session",
                     "debug_info": {
                         "automation_running": automation_status.get("running", False),
-                        "oauth_completed": automation_status.get("oauth_completed", False)
+                        "oauth_completed": automation_status.get("oauth_completed", False),
+                        "timestamp": datetime.now().isoformat()
                     }
                 }
             )
         
-        if not hasattr(automator, 'driver') or not automator.driver:
-            logger.warning("Browser driver not available for screenshot")
+        # Check if driver exists
+        if not hasattr(automator, 'driver'):
+            logger.warning("Automator has no driver attribute")
             return JSONResponse(
                 status_code=404, 
                 content={
-                    "error": "Browser not available", 
-                    "message": "Browser driver not active",
+                    "error": "Browser driver attribute missing", 
+                    "message": "Automator missing driver attribute",
                     "debug_info": {
-                        "automator_exists": automator is not None,
-                        "driver_attribute_exists": hasattr(automator, 'driver'),
-                        "environment": os.getenv('ENVIRONMENT', 'unknown'),
-                        "display": os.getenv('DISPLAY', 'not set')
+                        "automator_type": type(automator).__name__,
+                        "automator_attributes": [attr for attr in dir(automator) if not attr.startswith('_')],
+                        "timestamp": datetime.now().isoformat()
                     }
                 }
             )
         
-        # Enhanced browser status check
+        # Check if driver is None
+        if not automator.driver:
+            logger.warning("Browser driver is None, attempting initialization...")
+            try:
+                # Try to initialize browser
+                browser_setup_success = automator.setup_driver()
+                if not browser_setup_success or not automator.driver:
+                    logger.error("Failed to initialize browser driver")
+                    return JSONResponse(
+                        status_code=503,
+                        content={
+                            "error": "Browser initialization failed", 
+                            "message": "Could not start browser driver",
+                            "debug_info": {
+                                "environment": os.getenv('ENVIRONMENT', 'unknown'),
+                                "display": os.getenv('DISPLAY', 'not set'),
+                                "headless_mode": os.getenv('BROWSER_HEADLESS', 'not set'),
+                                "timestamp": datetime.now().isoformat()
+                            }
+                        }
+                    )
+                else:
+                    logger.info("Successfully initialized browser driver for screenshot")
+            except Exception as init_error:
+                logger.error(f"Browser initialization error: {init_error}")
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "error": "Browser initialization exception", 
+                        "message": str(init_error),
+                        "debug_info": {
+                            "init_error_type": type(init_error).__name__,
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    }
+                )
+        
+        # Enhanced browser status check with timeout
         try:
+            logger.info("🔍 Checking browser status...")
+            # Set a timeout for browser operations
+            automator.driver.set_page_load_timeout(10)
+            
             current_url = automator.driver.current_url
             page_title = automator.driver.title
-            logger.info(f"📍 Browser status - URL: {current_url}, Title: {page_title}")
+            
+            logger.info(f"📍 Browser status OK - URL: {current_url}, Title: {page_title}")
+            
         except Exception as status_error:
             logger.error(f"❌ Browser status check failed: {status_error}")
             return JSONResponse(
                 status_code=500,
                 content={
                     "error": "Browser status check failed",
-                    "message": str(status_error),
+                    "message": f"Browser appears to be unresponsive: {str(status_error)}",
                     "debug_info": {
+                        "status_error_type": type(status_error).__name__,
                         "driver_exists": automator.driver is not None,
-                        "status_error": str(status_error)
+                        "timestamp": datetime.now().isoformat()
                     }
                 }
             )
         
-        # Take screenshot and encode as base64
+        # Take screenshot with enhanced error handling
         try:
-            logger.info("📷 Attempting to capture screenshot...")
-            screenshot_png = automator.driver.get_screenshot_as_png()
+            logger.info("📷 Attempting screenshot capture...")
+            
+            # Try screenshot with timeout protection
+            import asyncio
+            
+            def capture_screenshot():
+                return automator.driver.get_screenshot_as_png()
+            
+            # Wrap in try-catch for any selenium exceptions
+            screenshot_png = capture_screenshot()
+            
+            if not screenshot_png:
+                raise Exception("Screenshot returned empty data")
+            
             screenshot_b64 = base64.b64encode(screenshot_png).decode('utf-8')
             logger.info(f"✅ Screenshot captured successfully - Size: {len(screenshot_png)} bytes")
+            
         except Exception as screenshot_error:
             logger.error(f"❌ Screenshot capture failed: {screenshot_error}")
             return JSONResponse(
                 status_code=500,
                 content={
                     "error": "Screenshot capture failed",
-                    "message": str(screenshot_error),
+                    "message": f"Could not capture browser screenshot: {str(screenshot_error)}",
                     "debug_info": {
-                        "screenshot_error": str(screenshot_error),
-                        "current_url": current_url,
-                        "page_title": page_title,
+                        "screenshot_error_type": type(screenshot_error).__name__,
+                        "current_url": current_url if 'current_url' in locals() else "unknown",
+                        "page_title": page_title if 'page_title' in locals() else "unknown",
                         "display": os.getenv('DISPLAY', 'not set'),
-                        "environment": os.getenv('ENVIRONMENT', 'unknown')
+                        "environment": os.getenv('ENVIRONMENT', 'unknown'),
+                        "timestamp": datetime.now().isoformat()
                     }
                 }
             )
         
-        return {
-            "screenshot": f"data:image/png;base64,{screenshot_b64}",
-            "timestamp": datetime.now().isoformat(),
-            "current_url": current_url,
-            "page_title": page_title,
-            "automation_running": automation_status["running"],
-            "debug_info": {
-                "screenshot_size": len(screenshot_png),
-                "display": os.getenv('DISPLAY', 'not set'),
-                "environment": os.getenv('ENVIRONMENT', 'unknown'),
-                "browser_headless": os.getenv('BROWSER_HEADLESS', 'not set')
+        # Success response
+        return JSONResponse(
+            status_code=200,
+            content={
+                "screenshot": f"data:image/png;base64,{screenshot_b64}",
+                "timestamp": datetime.now().isoformat(),
+                "current_url": current_url,
+                "page_title": page_title,
+                "automation_running": automation_status["running"],
+                "debug_info": {
+                    "screenshot_size": len(screenshot_png),
+                    "display": os.getenv('DISPLAY', 'not set'),
+                    "environment": os.getenv('ENVIRONMENT', 'unknown'),
+                    "browser_headless": os.getenv('BROWSER_HEADLESS', 'not set'),
+                    "success": True
+                }
             }
-        }
+        )
         
     except Exception as e:
-        logger.error(f"💥 Screenshot endpoint error: {e}")
+        logger.error(f"💥 Critical screenshot endpoint error: {e}")
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error details: {str(e)}")
+        
+        # Return a safe JSON response even for critical errors
         return JSONResponse(
             status_code=500, 
             content={
-                "error": "Screenshot endpoint failed", 
-                "message": str(e),
+                "error": "Critical screenshot endpoint failure", 
+                "message": f"Unexpected error: {str(e)}",
                 "debug_info": {
                     "error_type": type(e).__name__,
                     "automator_exists": automator is not None,
                     "display": os.getenv('DISPLAY', 'not set'),
-                    "environment": os.getenv('ENVIRONMENT', 'unknown')
+                    "environment": os.getenv('ENVIRONMENT', 'unknown'),
+                    "timestamp": datetime.now().isoformat(),
+                    "critical_error": True
                 }
             }
         )
@@ -1101,6 +1263,24 @@ async def debug_browser_status():
         debug_info["browser"] = "No active browser driver"
     
     return debug_info
+
+@app.get("/debug/startup")
+async def debug_startup_status():
+    """Simple endpoint to verify server is responding properly"""
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "server_responding",
+            "timestamp": datetime.now().isoformat(),
+            "message": "Server is alive and responding to requests",
+            "process_info": {
+                "pid": os.getpid(),
+                "environment": os.getenv('ENVIRONMENT', 'not set'),
+                "display": os.getenv('DISPLAY', 'not set'),
+                "browser_headless": os.getenv('BROWSER_HEADLESS', 'not set')
+            }
+        }
+    )
 
 # Startup and shutdown events
 @app.on_event("startup")

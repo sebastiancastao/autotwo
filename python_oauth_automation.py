@@ -468,9 +468,13 @@ class GmailOAuthAutomator:
                 logger.error(f"❌ Failed to navigate to OAuth URL: {e}")
                 return False
         else:
-            # If no URL provided, try to trigger OAuth from the main app
-            logger.info("🔍 No OAuth URL provided, checking for web app...")
-            try:
+            # If no URL provided, we should already be on the app page from monitor_oauth_process
+            logger.info("🔍 No OAuth URL provided, checking current page for OAuth triggers...")
+            
+            # Check current page first
+            current_url = self.driver.current_url
+            if current_url in ['data:,', 'about:blank'] or not current_url.startswith('http'):
+                logger.warning(f"⚠️ Browser is on empty page: {current_url}, attempting navigation...")
                 # Try multiple potential app URLs
                 potential_urls = [
                     f"{self.base_url}/gmail-processor",  # Primary Gmail processing route
@@ -483,7 +487,7 @@ class GmailOAuthAutomator:
                     try:
                         logger.info(f"🌐 Trying app URL: {app_url}")
                         self.driver.get(app_url)
-                        time.sleep(3)
+                        time.sleep(5)  # Wait longer for complex apps to load
                         
                         # Check if page loaded successfully
                         page_source = self.driver.page_source.lower()
@@ -542,9 +546,14 @@ class GmailOAuthAutomator:
                 if not success:
                     logger.warning("⚠️ Could not trigger OAuth from any web app URL")
                     return False
+            else:
+                logger.info(f"✅ Already on valid page: {current_url}")
                 
-            except Exception as e:
-                logger.error(f"❌ Failed to access web app: {e}")
+            # Look for and click the Gmail connect button
+            if self.trigger_oauth_from_app():
+                return True
+            else:
+                logger.warning("⚠️ Could not trigger OAuth from current page")
                 return False
         
         start_time = time.time()
@@ -2148,6 +2157,10 @@ class GmailOAuthAutomator:
             logger.info(f"📍 Current URL: {current_url}")
             logger.info(f"📄 Page title: {page_title}")
             
+            # Debug: Log page information for troubleshooting
+            logger.info(f"🔍 2FA Detection Debug - URL: {current_url}")
+            logger.info(f"🔍 2FA Detection Debug - Title: {page_title}")
+            
             # Check for 2FA-related keywords in page content (more specific to avoid false positives)
             # First check for password-related content to exclude password pages
             password_keywords = [
@@ -2194,12 +2207,19 @@ class GmailOAuthAutomator:
             has_twofa_url = any(pattern in current_url.lower() for pattern in twofa_url_patterns)
             has_specific_twofa_content = any(keyword in page_source for keyword in specific_twofa_keywords)
             
+            # Debug: Log detection results
+            logger.info(f"🔍 2FA Debug - Password content: {has_password_content}")
+            logger.info(f"🔍 2FA Debug - OAuth flow page: {is_oauth_flow_page}")
+            logger.info(f"🔍 2FA Debug - Consent content: {has_consent_content}")
+            logger.info(f"🔍 2FA Debug - 2FA URL pattern: {has_twofa_url}")
+            logger.info(f"🔍 2FA Debug - Specific 2FA content: {has_specific_twofa_content}")
+            
             # Only consider it 2FA if:
             # 1. It's not a password page AND
             # 2. It's not a standard OAuth flow page AND  
             # 3. It's not a consent/permission screen AND
-            # 4. (URL suggests 2FA OR has specific 2FA content) AND
-            # 5. Has actual 2FA-specific content (not just URL)
+            # 4. URL suggests 2FA AND
+            # 5. Has actual 2FA-specific content
             has_2fa_content = (not has_password_content and 
                              not is_oauth_flow_page and 
                              not has_consent_content and
@@ -3281,12 +3301,55 @@ class GmailOAuthAutomator:
         if not self.setup_driver():
             return False
         
+        # Ensure we have a valid URL to start with
+        if not initial_url:
+            initial_url = f"{self.base_url}/gmail-processor"  # Default to Gmail processor page
+            logger.info(f"🔧 No initial URL provided, using default: {initial_url}")
+        
         success = False
         try:
-            # If initial URL provided, navigate to it
-            if initial_url:
-                logger.info(f"🌐 Navigating to: {initial_url}")
+            # Always navigate to the target URL first
+            logger.info(f"🌐 Navigating to: {initial_url}")
+            try:
                 self.driver.get(initial_url)
+                time.sleep(3)  # Wait for page to load
+                
+                # Verify navigation was successful
+                current_url = self.driver.current_url
+                page_title = self.driver.title
+                logger.info(f"✅ Navigation completed - URL: {current_url}")
+                logger.info(f"📄 Page title: {page_title}")
+                
+                # Check if we're still on data:, or about:blank
+                if current_url in ['data:,', 'about:blank'] or not current_url.startswith('http'):
+                    logger.error(f"❌ Navigation failed - still on empty page: {current_url}")
+                    # Try alternative URLs
+                    alternative_urls = [
+                        self.base_url,
+                        f"{self.base_url}/",
+                        f"{self.base_url}/index.html"
+                    ]
+                    
+                    for alt_url in alternative_urls:
+                        logger.info(f"🔄 Trying alternative URL: {alt_url}")
+                        try:
+                            self.driver.get(alt_url)
+                            time.sleep(3)
+                            new_current_url = self.driver.current_url
+                            if new_current_url.startswith('http') and new_current_url not in ['data:,', 'about:blank']:
+                                logger.info(f"✅ Successfully navigated to: {new_current_url}")
+                                initial_url = alt_url
+                                break
+                        except Exception as alt_error:
+                            logger.warning(f"⚠️ Alternative URL failed: {alt_error}")
+                            continue
+                    else:
+                        logger.error("❌ All navigation attempts failed")
+                        return False
+                
+            except Exception as nav_error:
+                logger.error(f"❌ Navigation error: {nav_error}")
+                return False
             
             # Monitor for OAuth flow
             success = self.wait_for_oauth_page(initial_url)

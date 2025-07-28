@@ -247,6 +247,16 @@ async def run_automation_cycle():
         # Run OAuth if not completed
         if not automation_status["oauth_completed"]:
             logger.info("🔐 Attempting OAuth authentication")
+            
+            # Log current browser state for debugging
+            if automator and hasattr(automator, 'driver') and automator.driver:
+                try:
+                    current_url = automator.driver.current_url
+                    page_title = automator.driver.title
+                    logger.info(f"🔍 Browser state before OAuth - URL: {current_url}, Title: {page_title}")
+                except Exception as browser_error:
+                    logger.warning(f"⚠️ Could not get browser state: {browser_error}")
+            
             oauth_success = automator.attempt_oauth_with_retries()
             automation_status["oauth_completed"] = oauth_success
             

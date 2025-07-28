@@ -203,44 +203,6 @@ def init_automator():
     logger.info("✅ Gmail automator fully initialized with browser support", email=gmail_email)
     return automator
 
-def check_browser_health(automator):
-    """Check if browser is healthy and attempt recovery if needed"""
-    if not automator or not hasattr(automator, 'driver') or not automator.driver:
-        return False, "No browser driver available"
-    
-    try:
-        # Quick health check
-        current_url = automator.driver.current_url
-        return True, f"Browser healthy - URL: {current_url}"
-    
-    except Exception as error:
-        error_str = str(error).lower()
-        is_session_dead = any(keyword in error_str for keyword in [
-            'connection refused', 'max retries exceeded', 'newconnectionerror',
-            'connection aborted', 'session not found', 'invalid session'
-        ])
-        
-        if is_session_dead:
-            logger.warning("🔧 Detected dead browser session, attempting recovery...")
-            try:
-                # Clear dead driver
-                automator.driver = None
-                
-                # Attempt recovery
-                recovery_success = automator.setup_driver()
-                if recovery_success and automator.driver:
-                    logger.info("✅ Browser session recovered successfully")
-                    return True, "Browser recovered from dead session"
-                else:
-                    logger.error("❌ Browser recovery failed")
-                    return False, "Browser recovery failed"
-                    
-            except Exception as recovery_error:
-                logger.error(f"💥 Browser recovery error: {recovery_error}")
-                return False, f"Recovery failed: {str(recovery_error)}"
-        else:
-            return False, f"Browser error: {str(error)}"
-
 # Background automation task
 async def run_automation_cycle():
     """Run a single automation cycle with proper timing
@@ -275,141 +237,119 @@ async def run_automation_cycle():
             error_msg = f"Browser setup error in cycle {automation_status['cycle_count']}: {str(browser_error)}"
             automation_status["errors"].append(error_msg)
             return
-    else:
-        # Check if existing browser is healthy
-        browser_healthy, health_message = check_browser_health(automator)
-        if not browser_healthy:
-            logger.warning(f"🔧 Browser health check failed: {health_message}")
-            # Health check function already attempts recovery, check if it worked
-            if not hasattr(automator, 'driver') or not automator.driver:
-                error_msg = f"Browser health check and recovery failed in cycle {automation_status['cycle_count']}"
-                automation_status["errors"].append(error_msg)
-                return
-        else:
-            logger.info(f"✅ Browser health check passed: {health_message}")
+    
+    try:
+        automation_status["cycle_count"] += 1
+        cycle_start = datetime.now()
         
-        try:
-            automation_status["cycle_count"] += 1
-            cycle_start = datetime.now()
+        logger.info("🚀 Starting automation cycle", cycle=automation_status["cycle_count"])
+        
+        # Run OAuth if not completed
+        if not automation_status["oauth_completed"]:
+            logger.info("🔐 Attempting OAuth authentication")
+            oauth_success = automator.attempt_oauth_with_retries()
+            automation_status["oauth_completed"] = oauth_success
             
-            logger.info("🚀 Starting automation cycle", cycle=automation_status["cycle_count"])
-            
-            # Run OAuth if not completed
-            if not automation_status["oauth_completed"]:
-                logger.info("🔐 Attempting OAuth authentication")
+            if not oauth_success:
+                error_msg = f"OAuth failed in cycle {automation_status['cycle_count']}"
+                automation_status["errors"].append(error_msg)
+                logger.error(error_msg)
                 
-                # Log current browser state for debugging
-                if automator and hasattr(automator, 'driver') and automator.driver:
+                # Check if 2FA verification is needed
+                if automation_status.get("needs_verification", False):
+                    logger.info("⏸️ OAuth paused for 2FA verification - waiting for user input")
+                    return  # Don't treat as failure if waiting for 2FA
+                
+                return
+            else:
+                logger.info("✅ OAuth completed successfully")
+        else:
+            logger.info("✅ OAuth already completed, proceeding to Gmail processing")
+        
+        # Run the complete Gmail processing cycle (same as non-headless workflow)
+        cycle_success = automator.gmail_processing_cycle()
+        
+        if cycle_success:
+            # Extract the time range that was processed and calculate next run time
+            # This matches the original workflow timing logic
+            try:
+                start_hour, end_hour = automator.extract_time_range()
+                next_run_time = automator.calculate_next_run_time(end_hour)
+        
+                # Update scheduler for next run based on actual processing time
+                if scheduler.running:
                     try:
-                        current_url = automator.driver.current_url
-                        page_title = automator.driver.title
-                        logger.info(f"🔍 Browser state before OAuth - URL: {current_url}, Title: {page_title}")
-                    except Exception as browser_error:
-                        logger.warning(f"⚠️ Could not get browser state: {browser_error}")
-                
-                oauth_success = automator.attempt_oauth_with_retries()
-                automation_status["oauth_completed"] = oauth_success
-                
-                if not oauth_success:
-                    error_msg = f"OAuth failed in cycle {automation_status['cycle_count']}"
-                    automation_status["errors"].append(error_msg)
-                    logger.error(error_msg)
-                    
-                    # Check if 2FA verification is needed
-                    if automation_status.get("needs_verification", False):
-                        logger.info("⏸️ OAuth paused for 2FA verification - waiting for user input")
-                        return  # Don't treat as failure if waiting for 2FA
-                    
-                    return
-                else:
-                    logger.info("✅ OAuth completed successfully")
-            else:
-                logger.info("✅ OAuth already completed, proceeding to Gmail processing")
-            
-            # Run the complete Gmail processing cycle (same as non-headless workflow)
-            cycle_success = automator.gmail_processing_cycle()
-            
-            if cycle_success:
-                # Extract the time range that was processed and calculate next run time
-                # This matches the original workflow timing logic
-                try:
-                    start_hour, end_hour = automator.extract_time_range()
-                    next_run_time = automator.calculate_next_run_time(end_hour)
-            
-                    # Update scheduler for next run based on actual processing time
-                    if scheduler.running:
+                        # Remove existing job if it exists, then reschedule
                         try:
-                            # Remove existing job if it exists, then reschedule
-                            try:
-                                existing_job = scheduler.get_job('gmail_automation')
-                                if existing_job:
-                                    scheduler.remove_job('gmail_automation')
-                                    logger.info("📅 Removed existing scheduled job")
-                                else:
-                                    logger.info("📅 No existing job to remove")
-                            except Exception:
-                                # Job doesn't exist, which is fine
-                                logger.info("📅 No existing job found (normal for first run)")
-                            
-                            # Schedule next run based on processing time
-                            scheduler.add_job(
-                                run_automation_cycle,
-                                trigger='date',  # Single run at specific time
-                                run_date=next_run_time,
-                                id='gmail_automation',
-                                replace_existing=True
-                            )
-                            automation_status["next_cycle"] = next_run_time
-                            logger.info(f"⏰ Next cycle scheduled for: {next_run_time} (20 minutes after processing end time {end_hour})")
-                        except Exception as scheduler_error:
-                            logger.warning(f"Could not reschedule next run: {scheduler_error}")
-                            # Fallback to manual scheduling in 20 minutes
-                            automation_status["next_cycle"] = cycle_start + timedelta(minutes=20)
-                except Exception as e:
-                    logger.warning(f"Could not calculate next run time from processing time: {e}")
-                    # Fallback to simple 20-minute interval
-                    automation_status["next_cycle"] = cycle_start + timedelta(minutes=20)
-            else:
-                # If cycle failed, retry in 5 minutes
-                automation_status["next_cycle"] = cycle_start + timedelta(minutes=5)
-            
-            # Update status
-            automation_status["last_cycle"] = cycle_start
-            
-            # Store cycle result in Redis
-            if redis_client:
-                cycle_result = {
-                    "cycle_number": automation_status["cycle_count"],
-                    "success": cycle_success,
-                    "start_time": cycle_start.isoformat(),
-                    "end_time": datetime.now().isoformat(),
-                    "service": "web_service",
-                    "workflow_completed": cycle_success,
-                    "next_scheduled": automation_status["next_cycle"].isoformat() if automation_status["next_cycle"] else None
-                }
-                redis_client.lpush("cycle_history", json.dumps(cycle_result))
-                redis_client.ltrim("cycle_history", 0, 99)  # Keep last 100 cycles
-            
-            logger.info("Automation cycle completed successfully", 
-                       cycle=automation_status["cycle_count"],
-                       success=cycle_success,
-                       next_cycle=automation_status["next_cycle"].isoformat() if automation_status["next_cycle"] else "Not scheduled")
-            
-        except Exception as e:
-            error_msg = f"Error in cycle {automation_status['cycle_count']}: {str(e)}"
-            automation_status["errors"].append(error_msg)
-            logger.error("Automation cycle failed", cycle=automation_status["cycle_count"], error=str(e))
-            
-            # Store error in Redis
-            if redis_client:
-                error_result = {
-                    "cycle_number": automation_status["cycle_count"],
-                    "start_time": cycle_start.isoformat(),
-                    "end_time": datetime.now().isoformat(),
-                    "success": False,
-                    "error_message": str(e)
-                }
-                redis_client.lpush("cycle_history", json.dumps(error_result))
+                            existing_job = scheduler.get_job('gmail_automation')
+                            if existing_job:
+                                scheduler.remove_job('gmail_automation')
+                                logger.info("📅 Removed existing scheduled job")
+                            else:
+                                logger.info("📅 No existing job to remove")
+                        except Exception:
+                            # Job doesn't exist, which is fine
+                            logger.info("📅 No existing job found (normal for first run)")
+                        
+                        # Schedule next run based on processing time
+                        scheduler.add_job(
+                            run_automation_cycle,
+                            trigger='date',  # Single run at specific time
+                            run_date=next_run_time,
+                            id='gmail_automation',
+                            replace_existing=True
+                        )
+                        automation_status["next_cycle"] = next_run_time
+                        logger.info(f"⏰ Next cycle scheduled for: {next_run_time} (20 minutes after processing end time {end_hour})")
+                    except Exception as scheduler_error:
+                        logger.warning(f"Could not reschedule next run: {scheduler_error}")
+                        # Fallback to manual scheduling in 20 minutes
+                        automation_status["next_cycle"] = cycle_start + timedelta(minutes=20)
+            except Exception as e:
+                logger.warning(f"Could not calculate next run time from processing time: {e}")
+                # Fallback to simple 20-minute interval
+                automation_status["next_cycle"] = cycle_start + timedelta(minutes=20)
+        else:
+            # If cycle failed, retry in 5 minutes
+            automation_status["next_cycle"] = cycle_start + timedelta(minutes=5)
+        
+        # Update status
+        automation_status["last_cycle"] = cycle_start
+        
+        # Store cycle result in Redis
+        if redis_client:
+            cycle_result = {
+                "cycle_number": automation_status["cycle_count"],
+                "success": cycle_success,
+                "start_time": cycle_start.isoformat(),
+                "end_time": datetime.now().isoformat(),
+                "service": "web_service",
+                "workflow_completed": cycle_success,
+                "next_scheduled": automation_status["next_cycle"].isoformat() if automation_status["next_cycle"] else None
+            }
+            redis_client.lpush("cycle_history", json.dumps(cycle_result))
+            redis_client.ltrim("cycle_history", 0, 99)  # Keep last 100 cycles
+        
+        logger.info("Automation cycle completed successfully", 
+                   cycle=automation_status["cycle_count"],
+                   success=cycle_success,
+                   next_cycle=automation_status["next_cycle"].isoformat() if automation_status["next_cycle"] else "Not scheduled")
+        
+    except Exception as e:
+        error_msg = f"Error in cycle {automation_status['cycle_count']}: {str(e)}"
+        automation_status["errors"].append(error_msg)
+        logger.error("Automation cycle failed", cycle=automation_status["cycle_count"], error=str(e))
+        
+        # Store error in Redis
+        if redis_client:
+            error_result = {
+                "cycle_number": automation_status["cycle_count"],
+                "start_time": cycle_start.isoformat(),
+                "end_time": datetime.now().isoformat(),
+                "success": False,
+                "error_message": str(e)
+            }
+            redis_client.lpush("cycle_history", json.dumps(error_result))
 
 # API Routes
 @app.get("/", response_class=HTMLResponse)
@@ -677,8 +617,6 @@ async def root():
             
             let browserViewVisible = false;
             let screenshotInterval = null;
-            let consecutiveErrors = 0;
-            const MAX_CONSECUTIVE_ERRORS = 3;
             
             async function toggleBrowserView() {
                 const container = document.getElementById('screenshot-container');
@@ -693,9 +631,6 @@ async def root():
                     refreshBtn.style.display = 'inline-block';
                     toggleBtn.innerText = 'Hide Browser View';
                     browserViewVisible = true;
-                    
-                    // Reset error counter when toggling view
-                    consecutiveErrors = 0;
                     
                     // Start auto-refresh
                     refreshScreenshot();
@@ -804,9 +739,6 @@ async def root():
                     screenshot.style.display = 'block';
                     loading.style.display = 'none';
                     
-                    // Reset consecutive errors on success
-                    consecutiveErrors = 0;
-                    
                     // Update info
                     urlSpan.innerText = data.current_url || 'Unknown';
                     titleSpan.innerText = data.page_title || 'Unknown';
@@ -816,9 +748,6 @@ async def root():
                     
                 } catch (fetchError) {
                     console.error('Screenshot error:', fetchError);
-                    
-                    // Increment consecutive error counter
-                    consecutiveErrors++;
                     
                     // Show error state
                     screenshot.style.display = 'none';
@@ -833,20 +762,6 @@ async def root():
                         errorMsg = 'Server error (502) - browser initialization may have failed';
                     } else if (fetchError.message.includes('503')) {
                         errorMsg = 'Service unavailable (503) - browser driver not ready';
-                    } else if (fetchError.message.includes('Browser session died') || 
-                               fetchError.message.includes('connection refused') ||
-                               fetchError.message.includes('Browser health check failed')) {
-                        errorMsg = 'Browser session crashed - attempting recovery';
-                        
-                        // Stop auto-refresh if browser keeps dying
-                        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                            if (screenshotInterval) {
-                                clearInterval(screenshotInterval);
-                                screenshotInterval = null;
-                                console.log('Stopping auto-refresh due to persistent browser failures');
-                                errorMsg += ' (Auto-refresh stopped due to persistent failures)';
-                            }
-                        }
                     }
                     
                     document.getElementById('error-message').innerText = errorMsg;
@@ -856,12 +771,11 @@ async def root():
                     titleSpan.innerText = 'Screenshot failed';
                     timestampSpan.innerText = new Date().toLocaleTimeString();
                     
-                    // Add retry suggestion for certain errors (but not if we've stopped auto-refresh)
-                    if ((fetchError.message.includes('502') || fetchError.message.includes('503')) && 
-                        consecutiveErrors < MAX_CONSECUTIVE_ERRORS) {
+                    // Add retry suggestion for certain errors
+                    if (fetchError.message.includes('502') || fetchError.message.includes('503')) {
                         setTimeout(() => {
                             console.log('Auto-retrying screenshot after error...');
-                            if (browserViewVisible && screenshotInterval) {
+                            if (browserViewVisible) {
                                 refreshScreenshot();
                             }
                         }, 10000); // Retry after 10 seconds
@@ -1170,33 +1084,31 @@ async def get_browser_screenshot():
                     }
                 )
         
-        # Check browser health and attempt recovery if needed
-        browser_healthy, health_message = check_browser_health(automator)
-        if not browser_healthy:
-            logger.error(f"Browser health check failed: {health_message}")
+        # Enhanced browser status check with timeout
+        try:
+            logger.info("🔍 Checking browser status...")
+            # Set a timeout for browser operations
+            automator.driver.set_page_load_timeout(10)
+            
+            current_url = automator.driver.current_url
+            page_title = automator.driver.title
+            
+            logger.info(f"📍 Browser status OK - URL: {current_url}, Title: {page_title}")
+            
+        except Exception as status_error:
+            logger.error(f"❌ Browser status check failed: {status_error}")
             return JSONResponse(
-                status_code=503,
+                status_code=500,
                 content={
-                    "error": "Browser health check failed",
-                    "message": health_message,
+                    "error": "Browser status check failed",
+                    "message": f"Browser appears to be unresponsive: {str(status_error)}",
                     "debug_info": {
-                        "health_check_failed": True,
-                        "timestamp": datetime.now().isoformat(),
-                        "recovery_attempted": "dead session" in health_message
+                        "status_error_type": type(status_error).__name__,
+                        "driver_exists": automator.driver is not None,
+                        "timestamp": datetime.now().isoformat()
                     }
                 }
             )
-        
-        logger.info(f"✅ Browser health check passed: {health_message}")
-        
-        # Get current page info
-        try:
-            current_url = automator.driver.current_url
-            page_title = automator.driver.title
-        except Exception as info_error:
-            logger.warning(f"Could not get page info: {info_error}")
-            current_url = "unknown"
-            page_title = "unknown"
         
         # Take screenshot with enhanced error handling
         try:

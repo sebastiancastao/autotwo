@@ -468,13 +468,9 @@ class GmailOAuthAutomator:
                 logger.error(f"❌ Failed to navigate to OAuth URL: {e}")
                 return False
         else:
-            # If no URL provided, we should already be on the app page from monitor_oauth_process
-            logger.info("🔍 No OAuth URL provided, checking current page for OAuth triggers...")
-            
-            # Check current page first
-            current_url = self.driver.current_url
-            if current_url in ['data:,', 'about:blank'] or not current_url.startswith('http'):
-                logger.warning(f"⚠️ Browser is on empty page: {current_url}, attempting navigation...")
+            # If no URL provided, try to trigger OAuth from the main app
+            logger.info("🔍 No OAuth URL provided, checking for web app...")
+            try:
                 # Try multiple potential app URLs
                 potential_urls = [
                     f"{self.base_url}/gmail-processor",  # Primary Gmail processing route
@@ -487,7 +483,7 @@ class GmailOAuthAutomator:
                     try:
                         logger.info(f"🌐 Trying app URL: {app_url}")
                         self.driver.get(app_url)
-                        time.sleep(5)  # Wait longer for complex apps to load
+                        time.sleep(3)
                         
                         # Check if page loaded successfully
                         page_source = self.driver.page_source.lower()
@@ -546,14 +542,9 @@ class GmailOAuthAutomator:
                 if not success:
                     logger.warning("⚠️ Could not trigger OAuth from any web app URL")
                     return False
-            else:
-                logger.info(f"✅ Already on valid page: {current_url}")
                 
-            # Look for and click the Gmail connect button
-            if self.trigger_oauth_from_app():
-                return True
-            else:
-                logger.warning("⚠️ Could not trigger OAuth from current page")
+            except Exception as e:
+                logger.error(f"❌ Failed to access web app: {e}")
                 return False
         
         start_time = time.time()
@@ -2157,10 +2148,6 @@ class GmailOAuthAutomator:
             logger.info(f"📍 Current URL: {current_url}")
             logger.info(f"📄 Page title: {page_title}")
             
-            # Debug: Log page information for troubleshooting
-            logger.info(f"🔍 2FA Detection Debug - URL: {current_url}")
-            logger.info(f"🔍 2FA Detection Debug - Title: {page_title}")
-            
             # Check for 2FA-related keywords in page content (more specific to avoid false positives)
             # First check for password-related content to exclude password pages
             password_keywords = [
@@ -2171,14 +2158,13 @@ class GmailOAuthAutomator:
             
             has_password_content = any(keyword in page_source for keyword in password_keywords)
             
-            # Highly specific 2FA keywords that should only appear on actual 2FA pages
+            # More specific 2FA keywords that are less likely to appear on password pages
             specific_twofa_keywords = [
-                "verification code", "enter the code", "6-digit code", "8-digit code", "4-digit code",
+                "verification code", "enter the code", "6-digit code", "8-digit code",
                 "authenticator app", "google authenticator", "sms code", "text message code",
-                "two-factor", "2-factor", "2fa", "multi-factor", "enter code from phone",
-                "we sent a code", "code sent to your phone", "text message with code",
-                "enter the verification code", "check your phone for a code",
-                "enter 6-digit verification code", "enter your verification code"
+                "phone verification", "mobile verification", "two-factor", "2-factor", "2fa",
+                "we sent a code", "code sent to", "check your phone", "enter code from",
+                "verification method", "choose how to verify", "verify it's you"
             ]
             
             # URL-based 2FA detection (more reliable)
@@ -2186,63 +2172,34 @@ class GmailOAuthAutomator:
                 "challenge", "verify", "mfa", "2fa", "factor", "auth/sl/challenge"
             ]
             
-            # Exclude common OAuth flow URLs (login, consent, account selection, etc.)
-            oauth_flow_patterns = [
+            # Exclude common OAuth password/login URLs
+            oauth_login_patterns = [
                 "signin", "login", "accounts.google.com/signin", 
-                "accounts.google.com/v3/signin", "password", "identifier",
-                "consent", "oauth", "permissions", "scope", "authorize",
-                "accounts.google.com/oauth", "accounts.google.com/b/0/oauth"
+                "accounts.google.com/v3/signin", "password", "identifier"
             ]
             
-            # Detect consent/permission screens
-            consent_keywords = [
-                "wants to access", "requesting permission", "allow access",
-                "grant permission", "oauth consent", "permissions requested",
-                "this app wants to", "give access to", "allow this app",
-                "continue to", "has requested access", "scope", "scopes"
-            ]
-            
-            is_oauth_flow_page = any(pattern in current_url.lower() for pattern in oauth_flow_patterns)
-            has_consent_content = any(keyword in page_source for keyword in consent_keywords)
+            is_oauth_login_page = any(pattern in current_url.lower() for pattern in oauth_login_patterns)
             has_twofa_url = any(pattern in current_url.lower() for pattern in twofa_url_patterns)
             has_specific_twofa_content = any(keyword in page_source for keyword in specific_twofa_keywords)
             
-            # Debug: Log detection results
-            logger.info(f"🔍 2FA Debug - Password content: {has_password_content}")
-            logger.info(f"🔍 2FA Debug - OAuth flow page: {is_oauth_flow_page}")
-            logger.info(f"🔍 2FA Debug - Consent content: {has_consent_content}")
-            logger.info(f"🔍 2FA Debug - 2FA URL pattern: {has_twofa_url}")
-            logger.info(f"🔍 2FA Debug - Specific 2FA content: {has_specific_twofa_content}")
-            
             # Only consider it 2FA if:
             # 1. It's not a password page AND
-            # 2. It's not a standard OAuth flow page AND  
-            # 3. It's not a consent/permission screen AND
-            # 4. URL suggests 2FA AND
-            # 5. Has actual 2FA-specific content
+            # 2. It's not a standard OAuth login page AND
+            # 3. (URL suggests 2FA OR has specific 2FA content)
             has_2fa_content = (not has_password_content and 
-                             not is_oauth_flow_page and 
-                             not has_consent_content and
-                             has_twofa_url and
-                             has_specific_twofa_content)
+                             not is_oauth_login_page and 
+                             (has_twofa_url or has_specific_twofa_content))
             
             if has_2fa_content:
                 logger.info("🔒 2FA verification page detected!")
-                logger.info(f"🔍 2FA Detection reasons - URL: {has_twofa_url}, Content: {has_specific_twofa_content}")
+                logger.info(f"🔍 Detection reasons - URL pattern: {has_twofa_url}, Specific content: {has_specific_twofa_content}")
             elif has_password_content:
                 logger.info("🔑 Password page detected - skipping 2FA handling")
                 return False
-            elif is_oauth_flow_page:
-                logger.info("🔐 OAuth flow page detected - skipping 2FA handling")
-                return False  
-            elif has_consent_content:
-                logger.info("📝 OAuth consent/permission screen detected - skipping 2FA handling")
+            elif is_oauth_login_page:
+                logger.info("🔐 OAuth login page detected - skipping 2FA handling")
                 return False
-            else:
-                logger.info("ℹ️ Normal page detected - no 2FA verification needed")
-                return False
-            
-            if has_2fa_content:
+                
                 # First, look for and click "Get code" or similar buttons
                 logger.info("🔍 Looking for 'Get code' or 'Send code' buttons...")
                 get_code_selectors = [
@@ -3301,55 +3258,12 @@ class GmailOAuthAutomator:
         if not self.setup_driver():
             return False
         
-        # Ensure we have a valid URL to start with
-        if not initial_url:
-            initial_url = f"{self.base_url}/gmail-processor"  # Default to Gmail processor page
-            logger.info(f"🔧 No initial URL provided, using default: {initial_url}")
-        
         success = False
         try:
-            # Always navigate to the target URL first
-            logger.info(f"🌐 Navigating to: {initial_url}")
-            try:
+            # If initial URL provided, navigate to it
+            if initial_url:
+                logger.info(f"🌐 Navigating to: {initial_url}")
                 self.driver.get(initial_url)
-                time.sleep(3)  # Wait for page to load
-                
-                # Verify navigation was successful
-                current_url = self.driver.current_url
-                page_title = self.driver.title
-                logger.info(f"✅ Navigation completed - URL: {current_url}")
-                logger.info(f"📄 Page title: {page_title}")
-                
-                # Check if we're still on data:, or about:blank
-                if current_url in ['data:,', 'about:blank'] or not current_url.startswith('http'):
-                    logger.error(f"❌ Navigation failed - still on empty page: {current_url}")
-                    # Try alternative URLs
-                    alternative_urls = [
-                        self.base_url,
-                        f"{self.base_url}/",
-                        f"{self.base_url}/index.html"
-                    ]
-                    
-                    for alt_url in alternative_urls:
-                        logger.info(f"🔄 Trying alternative URL: {alt_url}")
-                        try:
-                            self.driver.get(alt_url)
-                            time.sleep(3)
-                            new_current_url = self.driver.current_url
-                            if new_current_url.startswith('http') and new_current_url not in ['data:,', 'about:blank']:
-                                logger.info(f"✅ Successfully navigated to: {new_current_url}")
-                                initial_url = alt_url
-                                break
-                        except Exception as alt_error:
-                            logger.warning(f"⚠️ Alternative URL failed: {alt_error}")
-                            continue
-                    else:
-                        logger.error("❌ All navigation attempts failed")
-                        return False
-                
-            except Exception as nav_error:
-                logger.error(f"❌ Navigation error: {nav_error}")
-                return False
             
             # Monitor for OAuth flow
             success = self.wait_for_oauth_page(initial_url)

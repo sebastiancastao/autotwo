@@ -104,7 +104,7 @@ class AutomationStatus(BaseModel):
 
 class StartAutomationRequest(BaseModel):
     password: str = Field(..., description="Gmail account password")
-    headless: bool = Field(default=True, description="Run browser in headless mode")
+    headless: bool = Field(default=False, description="Run browser in headless mode")
     debug: bool = Field(default=False, description="Enable debug mode")
 
 class CycleResult(BaseModel):
@@ -149,12 +149,11 @@ def init_automator():
         logger.warning("Gmail password not provided via environment variable")
         return None
     
-    # For cloud deployment, use headless mode but ensure screenshots work
-    # Set environment variable ENABLE_SCREENSHOTS=true to enable screenshot capability
-    enable_screenshots = os.getenv('ENABLE_SCREENSHOTS', 'true').lower() in ['true', '1', 'yes']
+    # Use environment variable to control headless mode (default: false for visible browser)
+    headless_mode = os.getenv('BROWSER_HEADLESS', 'false').lower() in ['true', '1', 'yes']
     
     automator = EternalGmailAutomator(
-        headless=True,  # Always headless in cloud, but screenshots still work
+        headless=headless_mode,  # Controlled by BROWSER_HEADLESS environment variable
         port=8080,
         password=gmail_password,
         debug=False,
@@ -482,7 +481,7 @@ async def root():
                     const response = await fetch('/start', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ password: password, headless: true })
+                        body: JSON.stringify({ password: password, headless: false })
                     });
                     
                     if (response.ok) {

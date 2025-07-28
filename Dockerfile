@@ -86,6 +86,9 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Make startup script executable
+RUN chmod +x start_with_display.sh
+
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
@@ -97,5 +100,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
-# Start the web service (auto-starts Gmail workflow in background if GMAIL_PASSWORD is provided)
-CMD ["python3", "web_service.py"] 
+# Start the web service with virtual display support for visible browser
+CMD ["./start_with_display.sh"] 

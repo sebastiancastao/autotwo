@@ -93,8 +93,11 @@ class GmailAutomationWorker:
                 logger.error("Gmail password not provided via environment variable")
                 return False
             
+            # Use environment variable to control headless mode (default: false for visible browser)
+            headless_mode = os.getenv('BROWSER_HEADLESS', 'false').lower() in ['true', '1', 'yes']
+            
             self.automator = EternalGmailAutomator(
-                headless=True,  # Always headless in cloud worker
+                headless=headless_mode,  # Controlled by BROWSER_HEADLESS environment variable
                 port=8080,
                 password=gmail_password,
                 debug=False,

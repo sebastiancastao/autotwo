@@ -2126,7 +2126,7 @@ class GmailOAuthAutomator:
                 else:
                     logger.info("ℹ️ No 'Get code' button found - verification might already be in progress")
                 
-                # Look for verification codes displayed on the page
+                # Enhanced verification code detection with Google-specific patterns
                 verification_code_patterns = [
                     # Common patterns for displayed verification codes
                     r'\b\d{6}\b',  # 6-digit codes
@@ -2136,28 +2136,96 @@ class GmailOAuthAutomator:
                     r'\b\d{7}\b'   # 7-digit codes
                 ]
                 
-                # Search for codes in page text
+                # Google-specific patterns for displayed verification codes
+                google_code_patterns = [
+                    r'G-\d{6}',  # Google codes with G- prefix
+                    r'Google.*?(\d{6})',  # Google followed by 6-digit code
+                    r'code.*?(\d{6})',  # "code" followed by 6-digit code
+                    r'verify.*?(\d{6})',  # "verify" followed by 6-digit code
+                    r'(\d{6}).*?Google',  # 6-digit code followed by Google
+                ]
+                
+                # Search for codes in page text and HTML
                 import re
                 page_text = self.driver.find_element(By.TAG_NAME, "body").text
+                page_html = self.driver.page_source
                 
                 found_codes = []
+                google_codes = []
+                
+                # Search with standard patterns
                 for pattern in verification_code_patterns:
                     matches = re.findall(pattern, page_text)
                     for match in matches:
-                        # Filter out common non-code numbers (like years, phone numbers, etc.)
+                        # Filter out common non-code numbers
                         if (len(match) >= 4 and len(match) <= 8 and 
-                            match not in ['2024', '2023', '2025', '1234', '0000']):
+                            match not in ['2024', '2023', '2025', '1234', '0000', '999999', '000000']):
                             found_codes.append(match)
                 
-                # Remove duplicates while preserving order
-                unique_codes = list(dict.fromkeys(found_codes))
+                # Search with Google-specific patterns
+                for pattern in google_code_patterns:
+                    # Search in visible text
+                    text_matches = re.findall(pattern, page_text, re.IGNORECASE)
+                    html_matches = re.findall(pattern, page_html, re.IGNORECASE)
+                    
+                    for matches in [text_matches, html_matches]:
+                        for match in matches:
+                            if isinstance(match, tuple):
+                                match = match[0]  # Extract from tuple if regex has groups
+                            clean_code = match.replace('G-', '').strip()
+                            if clean_code.isdigit() and len(clean_code) >= 4:
+                                google_codes.append(clean_code)
                 
-                if unique_codes:
-                    logger.info("📱 VERIFICATION CODES FOUND ON PAGE:")
-                    for code in unique_codes:
-                        print(f"\n🔢 VERIFICATION CODE: {code}")
-                        print(f"📱 Please enter this code on your phone: {code}")
-                        logger.info(f"📱 VERIFICATION CODE DETECTED: {code}")
+                # Look for codes in specific Google UI elements
+                google_code_selectors = [
+                    "//div[contains(@class, 'code')]",
+                    "//span[contains(@class, 'verification')]", 
+                    "//div[contains(text(), 'G-')]",
+                    "//span[contains(text(), 'G-')]",
+                    "//div[contains(@data-value, 'G-')]",
+                    "//span[contains(@data-value, 'G-')]",
+                    "//div[contains(@class, 'token')]",
+                    "//span[contains(@class, 'token')]",
+                    "//code",  # HTML <code> elements
+                    "//*[contains(@class, 'sms-code')]",
+                    "//*[contains(@class, 'verification-code')]"
+                ]
+                
+                for selector in google_code_selectors:
+                    try:
+                        elements = self.driver.find_elements(By.XPATH, selector)
+                        for element in elements:
+                            if element.is_displayed():
+                                text = element.text.strip()
+                                # Extract 4-8 digit numbers from the text
+                                codes = re.findall(r'\d{4,8}', text)
+                                for code in codes:
+                                    if code not in ['000000', '123456', '999999'] and len(code) >= 4:
+                                        google_codes.append(code)
+                    except:
+                        continue
+                
+                # Remove duplicates and combine all found codes
+                all_codes = list(dict.fromkeys(found_codes + google_codes))
+                
+                if all_codes:
+                    logger.info("🔍 VERIFICATION CODES DETECTED ON PAGE:")
+                    for i, code in enumerate(all_codes[:3]):  # Show max 3 codes
+                        print(f"\n🔢 VERIFICATION CODE #{i+1}: {code}")
+                        logger.info(f"📱 VERIFICATION CODE #{i+1}: {code}")
+                    
+                    # Try to automatically use the first detected code
+                    if len(all_codes) > 0:
+                        auto_code = all_codes[0]
+                        logger.info(f"🤖 Attempting to automatically use detected code: {auto_code}")
+                        
+                        # Try to enter the automatically detected code
+                        auto_success = self.enter_verification_code(auto_code)
+                        if auto_success:
+                            logger.info("✅ Automatically used detected verification code successfully!")
+                            return True
+                        else:
+                            logger.warning("⚠️ Auto-detected code failed, will ask for manual input")
                 
                 # Look for specific 2FA elements and messages
                 verification_selectors = [
@@ -2239,7 +2307,10 @@ class GmailOAuthAutomator:
                         if 'web_service' in sys.modules:
                             web_service = sys.modules['web_service']
                             web_service.automation_status["needs_verification"] = True
-                            web_service.automation_status["verification_message"] = "Please enter the verification code from your phone"
+                            if all_codes:
+                                web_service.automation_status["verification_message"] = f"🤖 Auto-detection found {len(all_codes)} codes but automatic entry failed. Please manually enter the verification code from your phone."
+                            else:
+                                web_service.automation_status["verification_message"] = "🔍 Automatic code detection is active. If no code is detected automatically, please enter the verification code from your phone."
                             logger.info("🌐 Updated web UI to show verification code input")
                             
                             # Wait for verification code from web UI

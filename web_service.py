@@ -308,7 +308,7 @@ async def root():
             .status { padding: 20px; margin: 20px 0; border-radius: 5px; }
             .running { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
             .stopped { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
-            .verification { background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 20px; margin: 20px 0; border-radius: 5px; }
+            .verification { background: #fff3cd; border: 2px solid #ffc107; color: #856404; padding: 25px; margin: 20px 0; border-radius: 10px; box-shadow: 0 4px 8px rgba(255,193,7,0.3); }
             .browser-view { background: #e7f3ff; border: 1px solid #b3d7ff; color: #004085; padding: 20px; margin: 20px 0; border-radius: 5px; }
             .btn { padding: 10px 20px; margin: 10px 5px; border: none; border-radius: 5px; cursor: pointer; }
             .btn-primary { background: #007bff; color: white; }
@@ -327,15 +327,44 @@ async def root():
                 <p>Fetching current status...</p>
             </div>
             
-            <!-- Verification Code Input Section -->
+            <!-- Enhanced Verification Code Input Section -->
             <div id="verification-section" class="verification" style="display: none;">
-                <h3>🔑 2FA Verification Required</h3>
-                <p>Please enter the verification code from your phone:</p>
-                <div style="margin: 15px 0;">
-                    <input type="text" id="verification-code" placeholder="Enter 6-digit code" maxlength="8" style="padding: 10px; font-size: 16px; width: 200px; text-align: center; border: 2px solid #007bff; border-radius: 5px;">
-                    <button class="btn btn-primary" onclick="submitVerificationCode()" style="margin-left: 10px;">Submit Code</button>
+                <h3>🔐 Google 2FA Verification Required</h3>
+                <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 20px; margin: 15px 0;">
+                    <h4 style="margin-top: 0; color: #495057;">📱 Automatic Detection Active</h4>
+                    <p style="margin: 10px 0; color: #6c757d;">The system is automatically scanning for verification codes on the page. If a code is detected, it will be used automatically.</p>
+                    <p style="margin: 10px 0; color: #6c757d;"><strong>Manual Backup:</strong> If automatic detection fails, enter your code below:</p>
                 </div>
-                <p id="verification-message" style="color: #666; font-style: italic;"></p>
+                
+                <div style="text-align: center; margin: 20px 0;">
+                    <label for="verification-code" style="display: block; font-weight: bold; margin-bottom: 8px; color: #495057;">📞 Enter Verification Code from Your Phone:</label>
+                    <input type="text" id="verification-code" placeholder="Enter 4-8 digit code" maxlength="8" 
+                           style="padding: 15px; font-size: 20px; width: 250px; text-align: center; border: 3px solid #007bff; border-radius: 8px; font-family: monospace; letter-spacing: 2px; box-shadow: 0 2px 4px rgba(0,123,255,0.3);">
+                    <br>
+                    <button class="btn btn-primary" onclick="submitVerificationCode()" 
+                            style="margin-top: 15px; padding: 12px 24px; font-size: 16px; border-radius: 8px;">
+                        ✅ Submit Verification Code
+                    </button>
+                </div>
+                
+                <div style="text-align: center; margin: 15px 0;">
+                    <small style="color: #6c757d;">
+                        💡 <strong>Tip:</strong> Check your phone for a text message or push notification with the verification code
+                    </small>
+                </div>
+                
+                <div id="verification-message" style="text-align: center; margin: 15px 0; padding: 10px; border-radius: 5px; font-weight: bold;"></div>
+                
+                <div style="background: #e7f3ff; border: 1px solid #b3d7ff; border-radius: 5px; padding: 15px; margin: 15px 0;">
+                    <h5 style="margin-top: 0; color: #004085;">🔍 What the automation is doing:</h5>
+                    <ul style="margin: 5px 0; color: #004085; text-align: left;">
+                        <li>Scanning the page for displayed verification codes</li>
+                        <li>Looking for Google-specific code patterns (G-######)</li>
+                        <li>Checking SMS and authenticator app notifications</li>
+                        <li>Attempting to automatically enter detected codes</li>
+                    </ul>
+                    <p style="margin-bottom: 0; color: #004085;"><strong>Note:</strong> If automatic detection works, you won't need to enter anything manually!</p>
+                </div>
             </div>
             
             <!-- Live Browser View Section -->
@@ -416,7 +445,19 @@ async def root():
                     const verificationSection = document.getElementById('verification-section');
                     if (status.needs_verification) {
                         verificationSection.style.display = 'block';
-                        document.getElementById('verification-message').innerText = status.verification_message || 'Please check your phone for the verification code.';
+                        const messageDiv = document.getElementById('verification-message');
+                        messageDiv.innerText = status.verification_message || 'Please check your phone for the verification code.';
+                        messageDiv.style.backgroundColor = '#d1ecf1';
+                        messageDiv.style.color = '#0c5460';
+                        messageDiv.style.border = '1px solid #bee5eb';
+                        
+                        // Auto-focus the input field
+                        setTimeout(() => {
+                            const codeInput = document.getElementById('verification-code');
+                            if (codeInput) {
+                                codeInput.focus();
+                            }
+                        }, 500);
                     } else {
                         verificationSection.style.display = 'none';
                     }
@@ -451,8 +492,10 @@ async def root():
                     const result = await response.json();
                     
                     if (response.ok) {
-                        messageDiv.innerText = 'Verification code submitted successfully!';
-                        messageDiv.style.color = '#28a745';
+                        messageDiv.innerText = '✅ Verification code submitted successfully!';
+                        messageDiv.style.backgroundColor = '#d4edda';
+                        messageDiv.style.color = '#155724';
+                        messageDiv.style.border = '1px solid #c3e6cb';
                         codeInput.value = '';
                         
                         // Hide verification section after successful submission
@@ -463,8 +506,10 @@ async def root():
                         // Refresh status
                         refreshStatus();
                     } else {
-                        messageDiv.innerText = result.detail || 'Failed to submit verification code.';
-                        messageDiv.style.color = '#dc3545';
+                        messageDiv.innerText = '❌ ' + (result.detail || 'Failed to submit verification code.');
+                        messageDiv.style.backgroundColor = '#f8d7da';
+                        messageDiv.style.color = '#721c24';
+                        messageDiv.style.border = '1px solid #f5c6cb';
                     }
                 } catch (error) {
                     messageDiv.innerText = 'Error submitting verification code.';
